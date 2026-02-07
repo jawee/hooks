@@ -1,0 +1,17 @@
+# Air configuration file
+root = "."
+
+
+[build]
+  cmd = "go build -o ./tmp/main ."
+  bin = "./tmp/main"
+  include_ext = [".go", ".tmpl", ".html", ".css", ".js"]
+  include_dir = [".", "templates", "static"]
+  exclude_dir = ["tmp"]
+  exclude_file = []
+  delay = 1000 # ms
+  log = "stderr"
+  send_interrupt = true
+
+[log]
+  color = "auto"
