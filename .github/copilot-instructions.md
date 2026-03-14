@@ -2,4 +2,4 @@
 - [x] Customize the Project
 - [x] Ensure Documentation is Complete
 
-This project is a Go web server using HTMX for frontend interactivity. See README.md for details.
+This project is a Go web server using HTMX for frontend interactivity, with all business data persisted in Postgres. See README.md for details and .env.sample for configuration.

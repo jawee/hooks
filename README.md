@@ -3,8 +3,8 @@
 A Go web server for testing webhooks with user authentication and per-user listener isolation.
 
 ## Features
-- User registration and login (in-memory, no persistence)
-- Per-user webhook listeners with unique UUIDs
+- User registration and login (Postgres persistence)
+- Per-user webhook listeners with unique UUIDs (Postgres-backed)
 - Real-time webhook request viewing with WebSocket updates
 - Anonymous POST to webhook endpoints
 - HTMX and Tailwind CSS for frontend
@@ -15,6 +15,7 @@ A Go web server for testing webhooks with user authentication and per-user liste
 ### Prerequisites
 - Go 1.23+ (https://golang.org/dl/)
 - templ CLI tool
+- Postgres database (see .env.sample for config)
 
 ### Installation
 
@@ -78,7 +79,7 @@ make run
 4. View incoming requests in real-time
 
 ## Notes
-- All data is stored in-memory and lost on server restart
+- All business data is persisted in Postgres; only active WebSocket connections are in memory
 - Sessions expire after 1 hour
 - WebSocket implementation is basic (for demo purposes)
 - Templ generates `*_templ.go` files which are excluded from git but required for builds

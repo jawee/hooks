@@ -24,5 +24,8 @@
 # Node/npm
 node_modules/
 
+# Environment config
+.env
+
 # OS files
 Thumbs.db
