@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
@@ -36,37 +37,183 @@ type websocketConn struct {
 }
 
 var (
-	templates = template.Must(template.ParseFiles("templates/index.html", "templates/listener.html"))
-	store     = &ListenerStore{listeners: make(map[string][]RequestInfo), conns: make(map[string]map[*websocketConn]struct{})}
+	templates = template.Must(template.ParseFiles(
+		"templates/index.html",
+		"templates/listener.html",
+		"templates/login.html",
+		"templates/register.html",
+	))
+	// user -> uuid -> []RequestInfo
+	userListeners = struct {
+		sync.RWMutex
+		data map[string]map[string][]RequestInfo
+	}{data: make(map[string]map[string][]RequestInfo)}
+	// username -> password (hardcoded for demo, but can register new users)
+	users = struct {
+		sync.RWMutex
+		data map[string]string
+	}{data: map[string]string{"demo": "demo123"}}
+	// sessionID -> username
+	sessions = struct {
+		sync.RWMutex
+		data map[string]string
+	}{data: make(map[string]string)}
+	// For websocket conns: user -> uuid -> set of conns
+	wsConns = struct {
+		sync.RWMutex
+		data map[string]map[string]map[*websocketConn]struct{}
+	}{data: make(map[string]map[string]map[*websocketConn]struct{})}
 )
 
 func main() {
-	// For development: create a default listener
-	devUUID := "800e7e855f2230ceb5d78edb66c87f63"
-	store.Lock()
-	if _, exists := store.listeners[devUUID]; !exists {
-		store.listeners[devUUID] = []RequestInfo{}
+	// Ensure demo user has a listener map
+	userListeners.Lock()
+	if userListeners.data["demo"] == nil {
+		userListeners.data["demo"] = make(map[string][]RequestInfo)
 	}
-	store.Unlock()
-
+	userListeners.Unlock()
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
-	http.HandleFunc("/", indexHandler)
-	http.HandleFunc("/create-listener", createListenerHandler)
-	http.HandleFunc("/listener/", listenerHandler)
-	http.HandleFunc("/ws/", wsHandler)
+	http.HandleFunc("/register", registerHandler)
+	http.HandleFunc("/login", loginHandler)
+	http.HandleFunc("/logout", logoutHandler)
+	http.HandleFunc("/", withAuth(indexHandler))
+	http.HandleFunc("/create-listener", withAuth(createListenerHandler))
+	// Split /listener/ routing: GETs require auth, POSTs are anonymous
+	http.HandleFunc("/listener/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			withAuth(listenerHandler)(w, r)
+		} else {
+			listenerHandler(w, r)
+		}
+	})
+	http.HandleFunc("/ws/", withAuth(wsHandler))
 	log.Println("Server started at http://localhost:8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
+// --- Auth Middleware and Helpers ---
+func withAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		username := getUsernameFromSession(r)
+		log.Printf("[DEBUG] withAuth: session_id=%v username=%v", r.Header.Get("Cookie"), username)
+		if username == "" {
+			log.Printf("[DEBUG] withAuth: No username in session, redirecting to login")
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		// Attach username to context
+		ctx := r.Context()
+		ctx = contextWithUsername(ctx, username)
+		next(w, r.WithContext(ctx))
+	}
+}
+
+func getUsernameFromSession(r *http.Request) string {
+	cookie, err := r.Cookie("session_id")
+	if err != nil {
+		return ""
+	}
+	sessions.RLock()
+	defer sessions.RUnlock()
+	return sessions.data[cookie.Value]
+}
+
+type contextKey string
+
+const usernameKey = contextKey("username")
+
+func contextWithUsername(ctx context.Context, username string) context.Context {
+	return context.WithValue(ctx, usernameKey, username)
+}
+func getUsername(r *http.Request) string {
+	v := r.Context().Value(usernameKey)
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
+// --- Registration/Login/Logout Handlers ---
+func registerHandler(w http.ResponseWriter, r *http.Request) {
+
+	if r.Method == http.MethodGet {
+		templates.ExecuteTemplate(w, "register.html", nil)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		templates.ExecuteTemplate(w, "register.html", map[string]interface{}{"Error": "Invalid form"})
+		return
+	}
+	username := r.FormValue("username")
+	password := r.FormValue("password")
+	if username == "" || password == "" {
+		templates.ExecuteTemplate(w, "register.html", map[string]interface{}{"Error": "Username and password required"})
+		return
+	}
+	users.Lock()
+	if _, exists := users.data[username]; exists {
+		users.Unlock()
+		templates.ExecuteTemplate(w, "register.html", map[string]interface{}{"Error": "Username already exists"})
+		return
+	}
+	users.data[username] = password
+	users.Unlock()
+	// Create empty listener map for user
+	userListeners.Lock()
+	userListeners.data[username] = make(map[string][]RequestInfo)
+	userListeners.Unlock()
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+func loginHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		templates.ExecuteTemplate(w, "login.html", nil)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		templates.ExecuteTemplate(w, "login.html", map[string]interface{}{"Error": "Invalid form"})
+		return
+	}
+	username := r.FormValue("username")
+	password := r.FormValue("password")
+	users.RLock()
+	realpw, exists := users.data[username]
+	users.RUnlock()
+	if !exists || realpw != password {
+		templates.ExecuteTemplate(w, "login.html", map[string]interface{}{"Error": "Invalid credentials"})
+		return
+	}
+	// Set session
+	sessionID := newUUID()
+	sessions.Lock()
+	sessions.data[sessionID] = username
+	sessions.Unlock()
+	http.SetCookie(w, &http.Cookie{Name: "session_id", Value: sessionID, Path: "/", HttpOnly: true, MaxAge: 3600})
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func logoutHandler(w http.ResponseWriter, r *http.Request) {
+
+	cookie, err := r.Cookie("session_id")
+	if err == nil {
+		sessions.Lock()
+		delete(sessions.data, cookie.Value)
+		sessions.Unlock()
+		http.SetCookie(w, &http.Cookie{Name: "session_id", Value: "", Path: "/", MaxAge: -1})
+	}
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
 func indexHandler(w http.ResponseWriter, r *http.Request) {
-	store.RLock()
+	username := getUsername(r)
+	userListeners.RLock()
 	var uuids []string
-	for uuid := range store.listeners {
+	for uuid := range userListeners.data[username] {
 		uuids = append(uuids, uuid)
 	}
-	store.RUnlock()
+	userListeners.RUnlock()
 	templates.ExecuteTemplate(w, "index.html", map[string]interface{}{
 		"Listeners": uuids,
+		"Username":  username,
 	})
 }
 
@@ -75,10 +222,17 @@ func createListenerHandler(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
+	username := getUsername(r)
+	log.Printf("[DEBUG] createListenerHandler: username=%v", username)
 	uuid := newUUID()
-	store.Lock()
-	store.listeners[uuid] = []RequestInfo{}
-	store.Unlock()
+	userListeners.Lock()
+	if userListeners.data[username] == nil {
+		log.Printf("[DEBUG] createListenerHandler: userListeners.data[%v] is nil, initializing", username)
+		userListeners.data[username] = make(map[string][]RequestInfo)
+	}
+	userListeners.data[username][uuid] = []RequestInfo{}
+	userListeners.Unlock()
+	log.Printf("[DEBUG] createListenerHandler: created uuid=%v for user=%v", uuid, username)
 	http.Redirect(w, r, "/listener/"+uuid, http.StatusSeeOther)
 }
 
@@ -88,22 +242,24 @@ func listenerHandler(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	switch r.Method {
-	case http.MethodGet:
-		store.RLock()
-		reqs, ok := store.listeners[uuid]
-		store.RUnlock()
-		if !ok {
+	if r.Method == http.MethodPost {
+		// Anonymous POST: find which user owns this uuid
+		userListeners.Lock()
+		var owner string
+		for user, m := range userListeners.data {
+			if _, ok := m[uuid]; ok {
+				owner = user
+				break
+			}
+		}
+		if owner == "" {
+			userListeners.Unlock()
 			http.NotFound(w, r)
 			return
 		}
-		templates.ExecuteTemplate(w, "listener.html", map[string]interface{}{
-			"UUID":     uuid,
-			"Requests": reqs,
-		})
-	case http.MethodPost:
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
+			userListeners.Unlock()
 			http.Error(w, "Failed to read body", http.StatusBadRequest)
 			return
 		}
@@ -112,23 +268,50 @@ func listenerHandler(w http.ResponseWriter, r *http.Request) {
 			Headers:   r.Header,
 			Body:      string(body),
 		}
-		store.Lock()
-		if _, ok := store.listeners[uuid]; ok {
-			store.listeners[uuid] = append(store.listeners[uuid], reqInfo)
-			// Broadcast to websockets as JSON
-			msgBytes, _ := json.Marshal(reqInfo)
-			for conn := range store.conns[uuid] {
-				select {
-				case conn.send <- string(msgBytes):
-				default:
-				}
+		userListeners.data[owner][uuid] = append(userListeners.data[owner][uuid], reqInfo)
+		// Broadcast to websockets as JSON
+		wsConns.RLock()
+		for conn := range wsConns.data[owner][uuid] {
+			select {
+			case conn.send <- string(mustJSON(reqInfo)):
+			default:
 			}
 		}
-		store.Unlock()
+		wsConns.RUnlock()
+		userListeners.Unlock()
 		w.WriteHeader(http.StatusOK)
+		return
+	}
+	// Auth required for GET
+	username := getUsername(r)
+	log.Printf("[DEBUG] listenerHandler GET: username=%v uuid=%v", username, uuid)
+	if username == "" {
+		log.Printf("[DEBUG] listenerHandler GET: No username in context, redirecting to login")
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		userListeners.RLock()
+		reqs, ok := userListeners.data[username][uuid]
+		userListeners.RUnlock()
+		log.Printf("[DEBUG] listenerHandler GET: userListeners.data[%v][%v] exists=%v", username, uuid, ok)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		templates.ExecuteTemplate(w, "listener.html", map[string]interface{}{
+			"UUID":     uuid,
+			"Requests": reqs,
+		})
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func mustJSON(v interface{}) []byte {
+	b, _ := json.Marshal(v)
+	return b
 }
 
 func headersToString(h map[string][]string) string {
@@ -146,6 +329,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	username := getUsername(r)
 	// Upgrade to websocket (very basic, for demo; for production use gorilla/websocket)
 	if r.Header.Get("Connection") != "Upgrade" || r.Header.Get("Upgrade") != "websocket" {
 		http.Error(w, "Not a websocket handshake", http.StatusBadRequest)
@@ -170,22 +354,25 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	bufrw.WriteString("Sec-WebSocket-Accept: " + accept + "\r\n\r\n")
 	bufrw.Flush()
 	ws := &websocketConn{send: make(chan string, 10), close: make(chan struct{}), w: w, r: r}
-	store.Lock()
-	if store.conns[uuid] == nil {
-		store.conns[uuid] = make(map[*websocketConn]struct{})
+	wsConns.Lock()
+	if wsConns.data[username] == nil {
+		wsConns.data[username] = make(map[string]map[*websocketConn]struct{})
 	}
-	store.conns[uuid][ws] = struct{}{}
-	store.Unlock()
-	go wsWriter(conn, ws, uuid)
+	if wsConns.data[username][uuid] == nil {
+		wsConns.data[username][uuid] = make(map[*websocketConn]struct{})
+	}
+	wsConns.data[username][uuid][ws] = struct{}{}
+	wsConns.Unlock()
+	go wsWriter(conn, ws, username, uuid)
 	// No reader: this is a one-way push
 }
 
-func wsWriter(conn net.Conn, ws *websocketConn, uuid string) {
+func wsWriter(conn net.Conn, ws *websocketConn, username, uuid string) {
 	defer func() {
 		conn.Close()
-		store.Lock()
-		delete(store.conns[uuid], ws)
-		store.Unlock()
+		wsConns.Lock()
+		delete(wsConns.data[username][uuid], ws)
+		wsConns.Unlock()
 	}()
 	for {
 		select {

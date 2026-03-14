@@ -7,7 +7,13 @@
 </head>
 <body class="bg-gray-50 min-h-screen">
     <div class="max-w-2xl mx-auto py-8">
-        <h1 class="text-2xl font-bold mb-4">Webhook Listener Landing Page</h1>
+        <div class="flex justify-between items-center mb-4">
+            <h1 class="text-2xl font-bold">Webhook Listener Landing Page</h1>
+            <div>
+                <span class="text-gray-700 mr-2">{{.Username}}</span>
+                <a href="/logout" class="text-blue-600 underline">Logout</a>
+            </div>
+        </div>
         <form method="POST" action="/create-listener" class="mb-6">
             <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition">Create New Webhook Listener</button>
         </form>
