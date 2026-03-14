@@ -1,4 +1,4 @@
-# Copilot Skill: Webhook Tester Project
+# Copilot Skill: hooks Project
 
 ## Domain
 Go web server, user authentication, webhook listener management, in-memory data, HTMX, Tailwind CSS, templ templates.

@@ -1,4 +1,4 @@
-# Webhook Tester
+# hooks
 
 A Go web server for testing webhooks with user authentication and per-user listener isolation.
 
@@ -43,7 +43,7 @@ make run
 #### Production
 ```bash
 make build
-./webhooktester
+./hooks
 ```
 
 The server will start at http://localhost:8080

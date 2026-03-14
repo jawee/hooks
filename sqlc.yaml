@@ -1,4 +1,4 @@
-# sqlc configuration for webhooktester
+# sqlc configuration for hooks
 version: "2"
 
 sql:

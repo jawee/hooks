@@ -21,8 +21,8 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/joho/godotenv"
 
-dbsqlc "webhooktester/db/sqlc"
-	"webhooktester/templates"
+dbsqlc "hooks/db/sqlc"
+	"hooks/templates"
 )
 
 type RequestInfo struct {
