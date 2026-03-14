@@ -13,7 +13,7 @@ A Go web server for testing webhooks with user authentication and per-user liste
 ## Getting Started
 
 ### Prerequisites
-- Go 1.23+ (https://golang.org/dl/)
+- Go 1.26+ (https://go.dev/dl/)
 - templ CLI tool
 - Postgres database (see .env.sample for config)
 
