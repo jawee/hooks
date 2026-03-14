@@ -19,10 +19,23 @@ type Config struct {
 	DemoUsername, DemoPassword string
 }
 
+type QueriesInterface interface {
+	GetUserByUsername(ctx context.Context, username string) (dbsqlc.User, error)
+	CreateUser(ctx context.Context, params dbsqlc.CreateUserParams) (dbsqlc.User, error)
+	GetListenersByUser(ctx context.Context, userID int32) ([]dbsqlc.Listener, error)
+	CreateSession(ctx context.Context, arg dbsqlc.CreateSessionParams) (dbsqlc.Session, error)
+	DeleteSession(ctx context.Context, sessionID string) error
+	GetSessionByID(ctx context.Context, sessionID string) (dbsqlc.Session, error)
+	CreateListener(ctx context.Context, arg dbsqlc.CreateListenerParams) (dbsqlc.Listener, error)
+	GetListenerByUUID(ctx context.Context, uuid string) (dbsqlc.Listener, error)
+	CreateRequest(ctx context.Context, arg dbsqlc.CreateRequestParams) (dbsqlc.Request, error)
+	GetRequestsByListener(ctx context.Context, listenerID int32) ([]dbsqlc.Request, error)
+}
+
 type App struct {
 	Config  Config
 	DB      *sql.DB
-	Queries *dbsqlc.Queries
+	Queries QueriesInterface
 }
 
 func NewConfigFromEnv() Config {
