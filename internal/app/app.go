@@ -114,4 +114,3 @@ func (a *App) withSession(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// ... (move all handler and helper methods here, will continue in next step)
