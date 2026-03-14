@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"html/template"
 	"io"
 	"log"
 	"net"
@@ -15,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"webhooktester/templates"
 )
 
 type RequestInfo struct {
@@ -37,12 +38,6 @@ type websocketConn struct {
 }
 
 var (
-	templates = template.Must(template.ParseFiles(
-		"templates/index.html",
-		"templates/listener.html",
-		"templates/login.html",
-		"templates/register.html",
-	))
 	// user -> uuid -> []RequestInfo
 	userListeners = struct {
 		sync.RWMutex
@@ -137,23 +132,23 @@ func getUsername(r *http.Request) string {
 func registerHandler(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == http.MethodGet {
-		templates.ExecuteTemplate(w, "register.html", nil)
+		templates.Register("").Render(r.Context(), w)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		templates.ExecuteTemplate(w, "register.html", map[string]interface{}{"Error": "Invalid form"})
+		templates.Register("Invalid form").Render(r.Context(), w)
 		return
 	}
 	username := r.FormValue("username")
 	password := r.FormValue("password")
 	if username == "" || password == "" {
-		templates.ExecuteTemplate(w, "register.html", map[string]interface{}{"Error": "Username and password required"})
+		templates.Register("Username and password required").Render(r.Context(), w)
 		return
 	}
 	users.Lock()
 	if _, exists := users.data[username]; exists {
 		users.Unlock()
-		templates.ExecuteTemplate(w, "register.html", map[string]interface{}{"Error": "Username already exists"})
+		templates.Register("Username already exists").Render(r.Context(), w)
 		return
 	}
 	users.data[username] = password
@@ -167,11 +162,11 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 
 func loginHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		templates.ExecuteTemplate(w, "login.html", nil)
+		templates.Login("").Render(r.Context(), w)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		templates.ExecuteTemplate(w, "login.html", map[string]interface{}{"Error": "Invalid form"})
+		templates.Login("Invalid form").Render(r.Context(), w)
 		return
 	}
 	username := r.FormValue("username")
@@ -180,7 +175,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	realpw, exists := users.data[username]
 	users.RUnlock()
 	if !exists || realpw != password {
-		templates.ExecuteTemplate(w, "login.html", map[string]interface{}{"Error": "Invalid credentials"})
+		templates.Login("Invalid credentials").Render(r.Context(), w)
 		return
 	}
 	// Set session
@@ -211,10 +206,7 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 		uuids = append(uuids, uuid)
 	}
 	userListeners.RUnlock()
-	templates.ExecuteTemplate(w, "index.html", map[string]interface{}{
-		"Listeners": uuids,
-		"Username":  username,
-	})
+	templates.Index(username, uuids).Render(r.Context(), w)
 }
 
 func createListenerHandler(w http.ResponseWriter, r *http.Request) {
@@ -300,10 +292,16 @@ func listenerHandler(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		templates.ExecuteTemplate(w, "listener.html", map[string]interface{}{
-			"UUID":     uuid,
-			"Requests": reqs,
-		})
+		// Convert []RequestInfo to []templates.RequestInfo
+		templReqs := make([]templates.RequestInfo, len(reqs))
+		for i, req := range reqs {
+			templReqs[i] = templates.RequestInfo{
+				Timestamp: req.Timestamp,
+				Headers:   req.Headers,
+				Body:      req.Body,
+			}
+		}
+		templates.Listener(uuid, templReqs).Render(r.Context(), w)
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}

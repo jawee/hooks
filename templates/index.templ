@@ -1,0 +1,36 @@
+package templates
+
+import "webhooktester/templates/layout"
+
+templ Index(username string, listeners []string) {
+	@layout.Base("Webhook Tester") {
+		<div class="max-w-2xl mx-auto py-8">
+			<div class="flex justify-between items-center mb-4">
+				<h1 class="text-2xl font-bold">Webhook Listener Landing Page</h1>
+				<div>
+					<span class="text-gray-700 mr-2">{ username }</span>
+					<a href="/logout" class="text-blue-600 underline">Logout</a>
+				</div>
+			</div>
+			<form method="POST" action="/create-listener" class="mb-6">
+				<button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition">Create New Webhook Listener</button>
+			</form>
+			if len(listeners) > 0 {
+				<h2 class="text-lg font-semibold mb-2">Active Listeners</h2>
+				<ul class="space-y-3">
+					for _, uuid := range listeners {
+						<li class="border rounded-lg bg-white shadow p-4 flex flex-col md:flex-row md:items-center md:justify-between">
+							<div>
+								<a href={ templ.URL("/listener/" + uuid) } class="text-blue-700 underline font-mono">/listener/{ uuid }</a>
+								<div class="text-xs text-gray-500 mt-1">POST endpoint: <span class="font-mono">/listener/{ uuid }</span></div>
+							</div>
+							<a href={ templ.URL("/listener/" + uuid) } class="mt-2 md:mt-0 inline-block px-3 py-1 bg-blue-100 text-blue-800 rounded text-xs font-semibold hover:bg-blue-200 transition">View</a>
+						</li>
+					}
+				</ul>
+			} else {
+				<p class="text-gray-500">No listeners created yet.</p>
+			}
+		</div>
+	}
+}

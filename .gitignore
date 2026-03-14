@@ -7,6 +7,9 @@
 *.dylib
 *.test
 
+# Templ generated files
+*_templ.go
+
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 

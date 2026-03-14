@@ -1,3 +1,5 @@
 module webhooktester
 
-go 1.21
+go 1.23.0
+
+require github.com/a-h/templ v0.3.1001 // indirect
