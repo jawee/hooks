@@ -4,17 +4,24 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha1"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
+	_ "github.com/lib/pq"
+	"github.com/joho/godotenv"
+
+dbsqlc "webhooktester/db/sqlc"
 	"webhooktester/templates"
 )
 
@@ -43,16 +50,6 @@ var (
 		sync.RWMutex
 		data map[string]map[string][]RequestInfo
 	}{data: make(map[string]map[string][]RequestInfo)}
-	// username -> password (hardcoded for demo, but can register new users)
-	users = struct {
-		sync.RWMutex
-		data map[string]string
-	}{data: map[string]string{"demo": "demo123"}}
-	// sessionID -> username
-	sessions = struct {
-		sync.RWMutex
-		data map[string]string
-	}{data: make(map[string]string)}
 	// For websocket conns: user -> uuid -> set of conns
 	wsConns = struct {
 		sync.RWMutex
@@ -60,13 +57,52 @@ var (
 	}{data: make(map[string]map[string]map[*websocketConn]struct{})}
 )
 
+var queries *dbsqlc.Queries
+
+
 func main() {
-	// Ensure demo user has a listener map
-	userListeners.Lock()
-	if userListeners.data["demo"] == nil {
-		userListeners.data["demo"] = make(map[string][]RequestInfo)
+	// Load environment variables from .env
+	_ = godotenv.Load()
+
+	dbHost := os.Getenv("DB_HOST")
+	dbPort := os.Getenv("DB_PORT")
+	dbUser := os.Getenv("DB_USER")
+	dbPassword := os.Getenv("DB_PASSWORD")
+	dbName := os.Getenv("DB_NAME")
+	dbSSLMode := os.Getenv("DB_SSLMODE")
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s", dbHost, dbPort, dbUser, dbPassword, dbName, dbSSLMode)
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
 	}
-	userListeners.Unlock()
+	if err := db.Ping(); err != nil {
+		log.Fatalf("Database not reachable: %v", err)
+	}
+	queries = dbsqlc.New(db) // dbsqlc.New expects DBTX, which *sql.DB implements
+
+	// Ensure demo user exists in the database
+	demoUser := os.Getenv("DEMO_USERNAME")
+	demoPass := os.Getenv("DEMO_PASSWORD")
+	if demoUser != "" && demoPass != "" {
+		_, err := queries.GetUserByUsername(context.Background(), demoUser)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				_, err := queries.CreateUser(context.Background(), dbsqlc.CreateUserParams{
+					Username:     demoUser,
+					PasswordHash: demoPass, // In production, hash this!
+				})
+				if err != nil {
+					log.Fatalf("Failed to create demo user: %v", err)
+				}
+				log.Printf("[INFO] Demo user '%s' created", demoUser)
+			} else {
+				log.Fatalf("Failed to check demo user: %v", err)
+			}
+		} else {
+			log.Printf("[INFO] Demo user '%s' already exists", demoUser)
+		}
+	}
+
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 	http.HandleFunc("/register", registerHandler)
 	http.HandleFunc("/login", loginHandler)
@@ -108,9 +144,15 @@ func getUsernameFromSession(r *http.Request) string {
 	if err != nil {
 		return ""
 	}
-	sessions.RLock()
-	defer sessions.RUnlock()
-	return sessions.data[cookie.Value]
+	sess, err := queries.GetSessionByID(r.Context(), cookie.Value)
+	if err != nil {
+		return ""
+	}
+	user, err := queries.GetUserByID(r.Context(), sess.UserID)
+	if err != nil {
+		return ""
+	}
+	return user.Username
 }
 
 type contextKey string
@@ -145,18 +187,25 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 		templates.Register("Username and password required").Render(r.Context(), w)
 		return
 	}
-	users.Lock()
-	if _, exists := users.data[username]; exists {
-		users.Unlock()
+	// Check if user exists
+	_, err := queries.GetUserByUsername(r.Context(), username)
+	if err == nil {
 		templates.Register("Username already exists").Render(r.Context(), w)
 		return
 	}
-	users.data[username] = password
-	users.Unlock()
-	// Create empty listener map for user
-	userListeners.Lock()
-	userListeners.data[username] = make(map[string][]RequestInfo)
-	userListeners.Unlock()
+	if err != sql.ErrNoRows {
+		templates.Register("Internal error").Render(r.Context(), w)
+		return
+	}
+	// Create user (store password as-is; hash in production!)
+	_, err = queries.CreateUser(r.Context(), dbsqlc.CreateUserParams{
+		Username:     username,
+		PasswordHash: password,
+	})
+	if err != nil {
+		templates.Register("Failed to create user").Render(r.Context(), w)
+		return
+	}
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
@@ -171,18 +220,21 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	username := r.FormValue("username")
 	password := r.FormValue("password")
-	users.RLock()
-	realpw, exists := users.data[username]
-	users.RUnlock()
-	if !exists || realpw != password {
+	user, err := queries.GetUserByUsername(r.Context(), username)
+	if err != nil || user.PasswordHash != password {
 		templates.Login("Invalid credentials").Render(r.Context(), w)
 		return
 	}
-	// Set session
+	// Set session in DB
 	sessionID := newUUID()
-	sessions.Lock()
-	sessions.data[sessionID] = username
-	sessions.Unlock()
+	_, err = queries.CreateSession(r.Context(), dbsqlc.CreateSessionParams{
+		SessionID: sessionID,
+		UserID:    user.ID,
+	})
+	if err != nil {
+		templates.Login("Internal error").Render(r.Context(), w)
+		return
+	}
 	http.SetCookie(w, &http.Cookie{Name: "session_id", Value: sessionID, Path: "/", HttpOnly: true, MaxAge: 3600})
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
@@ -191,21 +243,27 @@ func logoutHandler(w http.ResponseWriter, r *http.Request) {
 
 	cookie, err := r.Cookie("session_id")
 	if err == nil {
-		sessions.Lock()
-		delete(sessions.data, cookie.Value)
-		sessions.Unlock()
+		_ = queries.DeleteSession(r.Context(), cookie.Value)
 		http.SetCookie(w, &http.Cookie{Name: "session_id", Value: "", Path: "/", MaxAge: -1})
 	}
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 func indexHandler(w http.ResponseWriter, r *http.Request) {
 	username := getUsername(r)
-	userListeners.RLock()
-	var uuids []string
-	for uuid := range userListeners.data[username] {
-		uuids = append(uuids, uuid)
+	user, err := queries.GetUserByUsername(r.Context(), username)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusInternalServerError)
+		return
 	}
-	userListeners.RUnlock()
+	listeners, err := queries.GetListenersByUser(r.Context(), user.ID)
+	if err != nil {
+		http.Error(w, "Failed to fetch listeners", http.StatusInternalServerError)
+		return
+	}
+	var uuids []string
+	for _, l := range listeners {
+		uuids = append(uuids, l.Uuid)
+	}
 	templates.Index(username, uuids).Render(r.Context(), w)
 }
 
@@ -216,96 +274,109 @@ func createListenerHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	username := getUsername(r)
 	log.Printf("[DEBUG] createListenerHandler: username=%v", username)
-	uuid := newUUID()
-	userListeners.Lock()
-	if userListeners.data[username] == nil {
-		log.Printf("[DEBUG] createListenerHandler: userListeners.data[%v] is nil, initializing", username)
-		userListeners.data[username] = make(map[string][]RequestInfo)
+	user, err := queries.GetUserByUsername(r.Context(), username)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusInternalServerError)
+		return
 	}
-	userListeners.data[username][uuid] = []RequestInfo{}
-	userListeners.Unlock()
+	uuid := newUUID()
+	_, err = queries.CreateListener(r.Context(), dbsqlc.CreateListenerParams{
+		Uuid:   uuid,
+		UserID: user.ID,
+	})
+	if err != nil {
+		http.Error(w, "Failed to create listener", http.StatusInternalServerError)
+		return
+	}
 	log.Printf("[DEBUG] createListenerHandler: created uuid=%v for user=%v", uuid, username)
 	http.Redirect(w, r, "/listener/"+uuid, http.StatusSeeOther)
 }
 
 func listenerHandler(w http.ResponseWriter, r *http.Request) {
-	uuid := r.URL.Path[len("/listener/"):]
+	uuid := r.URL.Path[len("/listener/") :]
 	if uuid == "" {
 		http.NotFound(w, r)
 		return
 	}
+	listener, err := queries.GetListenerByUUID(r.Context(), uuid)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
 	if r.Method == http.MethodPost {
-		// Anonymous POST: find which user owns this uuid
-		userListeners.Lock()
-		var owner string
-		for user, m := range userListeners.data {
-			if _, ok := m[uuid]; ok {
-				owner = user
-				break
-			}
-		}
-		if owner == "" {
-			userListeners.Unlock()
-			http.NotFound(w, r)
-			return
-		}
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			userListeners.Unlock()
 			http.Error(w, "Failed to read body", http.StatusBadRequest)
 			return
 		}
-		reqInfo := RequestInfo{
-			Timestamp: time.Now().Format(time.RFC3339),
-			Headers:   r.Header,
-			Body:      string(body),
+		headers, err := json.Marshal(r.Header)
+		if err != nil {
+			http.Error(w, "Failed to encode headers", http.StatusInternalServerError)
+			return
 		}
-		userListeners.data[owner][uuid] = append(userListeners.data[owner][uuid], reqInfo)
-		// Broadcast to websockets as JSON
+		_, err = queries.CreateRequest(r.Context(), dbsqlc.CreateRequestParams{
+			ListenerID: listener.ID,
+			Headers:    headers,
+			Body:       string(body),
+		})
+		if err != nil {
+			http.Error(w, "Failed to save request", http.StatusInternalServerError)
+			return
+		}
+		// Broadcast to websockets for real-time update
 		wsConns.RLock()
-		for conn := range wsConns.data[owner][uuid] {
-			select {
-			case conn.send <- string(mustJSON(reqInfo)):
-			default:
+		for conn := range wsConns.data {
+			if userMap, ok := wsConns.data[conn]; ok {
+				if uuidMap, ok := userMap[uuid]; ok {
+					for ws := range uuidMap {
+						var hdrs map[string][]string
+						_ = json.Unmarshal(headers, &hdrs)
+						msg := templates.RequestInfo{
+							Timestamp: time.Now().Format(time.RFC3339),
+							Headers:   hdrs,
+							Body:      string(body),
+						}
+						select {
+						case ws.send <- string(mustJSON(msg)):
+						default:
+						}
+					}
+				}
 			}
 		}
 		wsConns.RUnlock()
-		userListeners.Unlock()
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 	// Auth required for GET
 	username := getUsername(r)
-	log.Printf("[DEBUG] listenerHandler GET: username=%v uuid=%v", username, uuid)
 	if username == "" {
-		log.Printf("[DEBUG] listenerHandler GET: No username in context, redirecting to login")
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	switch r.Method {
-	case http.MethodGet:
-		userListeners.RLock()
-		reqs, ok := userListeners.data[username][uuid]
-		userListeners.RUnlock()
-		log.Printf("[DEBUG] listenerHandler GET: userListeners.data[%v][%v] exists=%v", username, uuid, ok)
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-		// Convert []RequestInfo to []templates.RequestInfo
-		templReqs := make([]templates.RequestInfo, len(reqs))
-		for i, req := range reqs {
-			templReqs[i] = templates.RequestInfo{
-				Timestamp: req.Timestamp,
-				Headers:   req.Headers,
-				Body:      req.Body,
-			}
-		}
-		templates.Listener(uuid, templReqs).Render(r.Context(), w)
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	user, err := queries.GetUserByUsername(r.Context(), username)
+	if err != nil || user.ID != listener.UserID {
+		http.NotFound(w, r)
+		return
 	}
+	reqs, err := queries.GetRequestsByListener(r.Context(), listener.ID)
+	if err != nil {
+		http.Error(w, "Failed to fetch requests", http.StatusInternalServerError)
+		return
+	}
+	templReqs := make([]templates.RequestInfo, len(reqs))
+	for i, req := range reqs {
+		var hdrs map[string][]string
+		_ = json.Unmarshal(req.Headers, &hdrs)
+		templReqs[i] = templates.RequestInfo{
+			Timestamp: req.Timestamp.Format(time.RFC3339),
+			Headers:   hdrs,
+			Body:      req.Body,
+		}
+	}
+	templates.Listener(uuid, templReqs).Render(r.Context(), w)
 }
+
 
 func mustJSON(v interface{}) []byte {
 	b, _ := json.Marshal(v)
