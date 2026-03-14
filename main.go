@@ -57,70 +57,110 @@ var (
 	}{data: make(map[string]map[string]map[*websocketConn]struct{})}
 )
 
+// Deprecated: queries is only used by getUsernameFromSession for withAuth. Use App.Queries elsewhere.
 var queries *dbsqlc.Queries
 
 
-func main() {
-	// Load environment variables from .env
-	_ = godotenv.Load()
+type Config struct {
+	DBHost, DBPort, DBUser, DBPassword, DBName, DBSSLMode string
+	DemoUsername, DemoPassword string
+}
 
-	dbHost := os.Getenv("DB_HOST")
-	dbPort := os.Getenv("DB_PORT")
-	dbUser := os.Getenv("DB_USER")
-	dbPassword := os.Getenv("DB_PASSWORD")
-	dbName := os.Getenv("DB_NAME")
-	dbSSLMode := os.Getenv("DB_SSLMODE")
-	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s", dbHost, dbPort, dbUser, dbPassword, dbName, dbSSLMode)
+type App struct {
+	Config  Config
+	DB      *sql.DB
+	Queries *dbsqlc.Queries
+}
+
+func NewConfigFromEnv() Config {
+	_ = godotenv.Load()
+	return Config{
+		DBHost:      os.Getenv("DB_HOST"),
+		DBPort:      os.Getenv("DB_PORT"),
+		DBUser:      os.Getenv("DB_USER"),
+		DBPassword:  os.Getenv("DB_PASSWORD"),
+		DBName:      os.Getenv("DB_NAME"),
+		DBSSLMode:   os.Getenv("DB_SSLMODE"),
+		DemoUsername: os.Getenv("DEMO_USERNAME"),
+		DemoPassword: os.Getenv("DEMO_PASSWORD"),
+	}
+}
+
+func NewApp(cfg Config) (*App, error) {
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s", cfg.DBHost, cfg.DBPort, cfg.DBUser, cfg.DBPassword, cfg.DBName, cfg.DBSSLMode)
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		return nil, fmt.Errorf("Failed to connect to database: %w", err)
 	}
 	if err := db.Ping(); err != nil {
-		log.Fatalf("Database not reachable: %v", err)
+		return nil, fmt.Errorf("Database not reachable: %w", err)
 	}
-	queries = dbsqlc.New(db) // dbsqlc.New expects DBTX, which *sql.DB implements
+	return &App{
+		Config:  cfg,
+		DB:      db,
+		Queries: dbsqlc.New(db),
+	}, nil
+}
 
-	// Ensure demo user exists in the database
-	demoUser := os.Getenv("DEMO_USERNAME")
-	demoPass := os.Getenv("DEMO_PASSWORD")
-	if demoUser != "" && demoPass != "" {
-		_, err := queries.GetUserByUsername(context.Background(), demoUser)
+func (a *App) setupDemoUser() error {
+	if a.Config.DemoUsername != "" && a.Config.DemoPassword != "" {
+		_, err := a.Queries.GetUserByUsername(context.Background(), a.Config.DemoUsername)
 		if err != nil {
 			if err == sql.ErrNoRows {
-				_, err := queries.CreateUser(context.Background(), dbsqlc.CreateUserParams{
-					Username:     demoUser,
-					PasswordHash: demoPass, // In production, hash this!
+				_, err := a.Queries.CreateUser(context.Background(), dbsqlc.CreateUserParams{
+					Username:     a.Config.DemoUsername,
+					PasswordHash: a.Config.DemoPassword, // In production, hash this!
 				})
 				if err != nil {
-					log.Fatalf("Failed to create demo user: %v", err)
+					return fmt.Errorf("Failed to create demo user: %w", err)
 				}
-				log.Printf("[INFO] Demo user '%s' created", demoUser)
+				log.Printf("[INFO] Demo user '%s' created", a.Config.DemoUsername)
 			} else {
-				log.Fatalf("Failed to check demo user: %v", err)
+				return fmt.Errorf("Failed to check demo user: %w", err)
 			}
 		} else {
-			log.Printf("[INFO] Demo user '%s' already exists", demoUser)
+			log.Printf("[INFO] Demo user '%s' already exists", a.Config.DemoUsername)
 		}
 	}
+	return nil
+}
 
-	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
-	http.HandleFunc("/register", registerHandler)
-	http.HandleFunc("/login", loginHandler)
-	http.HandleFunc("/logout", logoutHandler)
-	http.HandleFunc("/", withAuth(indexHandler))
-	http.HandleFunc("/create-listener", withAuth(createListenerHandler))
-	// Split /listener/ routing: GETs require auth, POSTs are anonymous
-	http.HandleFunc("/listener/", func(w http.ResponseWriter, r *http.Request) {
+func (a *App) routes() http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	mux.HandleFunc("/register", a.registerHandler)
+	mux.HandleFunc("/login", a.loginHandler)
+	mux.HandleFunc("/logout", a.logoutHandler)
+	mux.HandleFunc("/", withAuth(a.indexHandler))
+	mux.HandleFunc("/create-listener", withAuth(a.createListenerHandler))
+	mux.HandleFunc("/listener/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			withAuth(listenerHandler)(w, r)
+			withAuth(a.listenerHandler)(w, r)
 		} else {
-			listenerHandler(w, r)
+			a.listenerHandler(w, r)
 		}
 	})
-	http.HandleFunc("/ws/", withAuth(wsHandler))
-	log.Println("Server started at http://localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	mux.HandleFunc("/ws/", withAuth(a.wsHandler))
+	return mux
 }
+
+func (a *App) Run(addr string) error {
+	log.Println("Server started at http://" + addr)
+	return http.ListenAndServe(addr, a.routes())
+}
+
+func main() {
+	cfg := NewConfigFromEnv()
+	app, err := NewApp(cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := app.setupDemoUser(); err != nil {
+		log.Fatal(err)
+	}
+	log.Fatal(app.Run(":8080"))
+}
+
 
 // --- Auth Middleware and Helpers ---
 func withAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -140,6 +180,9 @@ func withAuth(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func getUsernameFromSession(r *http.Request) string {
+	// This function is now only used by withAuth, which is not a method on App.
+	// It still uses the global queries variable for now.
+
 	cookie, err := r.Cookie("session_id")
 	if err != nil {
 		return ""
@@ -171,8 +214,7 @@ func getUsername(r *http.Request) string {
 }
 
 // --- Registration/Login/Logout Handlers ---
-func registerHandler(w http.ResponseWriter, r *http.Request) {
-
+func (a *App) registerHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		templates.Register("").Render(r.Context(), w)
 		return
@@ -188,7 +230,7 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Check if user exists
-	_, err := queries.GetUserByUsername(r.Context(), username)
+	_, err := a.Queries.GetUserByUsername(r.Context(), username)
 	if err == nil {
 		templates.Register("Username already exists").Render(r.Context(), w)
 		return
@@ -198,7 +240,7 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Create user (store password as-is; hash in production!)
-	_, err = queries.CreateUser(r.Context(), dbsqlc.CreateUserParams{
+	_, err = a.Queries.CreateUser(r.Context(), dbsqlc.CreateUserParams{
 		Username:     username,
 		PasswordHash: password,
 	})
@@ -209,7 +251,7 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
-func loginHandler(w http.ResponseWriter, r *http.Request) {
+func (a *App) loginHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		templates.Login("").Render(r.Context(), w)
 		return
@@ -220,14 +262,14 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	username := r.FormValue("username")
 	password := r.FormValue("password")
-	user, err := queries.GetUserByUsername(r.Context(), username)
+	user, err := a.Queries.GetUserByUsername(r.Context(), username)
 	if err != nil || user.PasswordHash != password {
 		templates.Login("Invalid credentials").Render(r.Context(), w)
 		return
 	}
 	// Set session in DB
 	sessionID := newUUID()
-	_, err = queries.CreateSession(r.Context(), dbsqlc.CreateSessionParams{
+	_, err = a.Queries.CreateSession(r.Context(), dbsqlc.CreateSessionParams{
 		SessionID: sessionID,
 		UserID:    user.ID,
 	})
@@ -239,23 +281,23 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-func logoutHandler(w http.ResponseWriter, r *http.Request) {
+func (a *App) logoutHandler(w http.ResponseWriter, r *http.Request) {
 
 	cookie, err := r.Cookie("session_id")
 	if err == nil {
-		_ = queries.DeleteSession(r.Context(), cookie.Value)
+		_ = a.Queries.DeleteSession(r.Context(), cookie.Value)
 		http.SetCookie(w, &http.Cookie{Name: "session_id", Value: "", Path: "/", MaxAge: -1})
 	}
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
-func indexHandler(w http.ResponseWriter, r *http.Request) {
+func (a *App) indexHandler(w http.ResponseWriter, r *http.Request) {
 	username := getUsername(r)
 	user, err := queries.GetUserByUsername(r.Context(), username)
 	if err != nil {
 		http.Error(w, "User not found", http.StatusInternalServerError)
 		return
 	}
-	listeners, err := queries.GetListenersByUser(r.Context(), user.ID)
+	listeners, err := a.Queries.GetListenersByUser(r.Context(), user.ID)
 	if err != nil {
 		http.Error(w, "Failed to fetch listeners", http.StatusInternalServerError)
 		return
@@ -267,7 +309,7 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 	templates.Index(username, uuids).Render(r.Context(), w)
 }
 
-func createListenerHandler(w http.ResponseWriter, r *http.Request) {
+func (a *App) createListenerHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
@@ -280,7 +322,7 @@ func createListenerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	uuid := newUUID()
-	_, err = queries.CreateListener(r.Context(), dbsqlc.CreateListenerParams{
+	_, err = a.Queries.CreateListener(r.Context(), dbsqlc.CreateListenerParams{
 		Uuid:   uuid,
 		UserID: user.ID,
 	})
@@ -292,13 +334,13 @@ func createListenerHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/listener/"+uuid, http.StatusSeeOther)
 }
 
-func listenerHandler(w http.ResponseWriter, r *http.Request) {
+func (a *App) listenerHandler(w http.ResponseWriter, r *http.Request) {
 	uuid := r.URL.Path[len("/listener/") :]
 	if uuid == "" {
 		http.NotFound(w, r)
 		return
 	}
-	listener, err := queries.GetListenerByUUID(r.Context(), uuid)
+	listener, err := a.Queries.GetListenerByUUID(r.Context(), uuid)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -314,7 +356,7 @@ func listenerHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to encode headers", http.StatusInternalServerError)
 			return
 		}
-		_, err = queries.CreateRequest(r.Context(), dbsqlc.CreateRequestParams{
+		_, err = a.Queries.CreateRequest(r.Context(), dbsqlc.CreateRequestParams{
 			ListenerID: listener.ID,
 			Headers:    headers,
 			Body:       string(body),
@@ -359,7 +401,7 @@ func listenerHandler(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	reqs, err := queries.GetRequestsByListener(r.Context(), listener.ID)
+	reqs, err := a.Queries.GetRequestsByListener(r.Context(), listener.ID)
 	if err != nil {
 		http.Error(w, "Failed to fetch requests", http.StatusInternalServerError)
 		return
@@ -392,7 +434,7 @@ func headersToString(h map[string][]string) string {
 }
 
 // --- WebSocket handler (simple, not RFC6455 compliant, for demo only) ---
-func wsHandler(w http.ResponseWriter, r *http.Request) {
+func (a *App) wsHandler(w http.ResponseWriter, r *http.Request) {
 	uuid := strings.TrimPrefix(r.URL.Path, "/ws/")
 	if uuid == "" {
 		http.NotFound(w, r)
