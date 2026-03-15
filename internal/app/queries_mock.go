@@ -11,6 +11,31 @@ type MockQueries struct {
 	mock.Mock
 }
 
+func (m *MockQueries) GetUserByID(ctx context.Context, id int32) (dbsqlc.User, error) {
+	args := m.Called(ctx, id)
+	return args.Get(0).(dbsqlc.User), args.Error(1)
+}
+
+func (m *MockQueries) CreateRefreshToken(ctx context.Context, arg dbsqlc.CreateRefreshTokenParams) (dbsqlc.RefreshToken, error) {
+	args := m.Called(ctx, arg)
+	return args.Get(0).(dbsqlc.RefreshToken), args.Error(1)
+}
+
+func (m *MockQueries) GetRefreshToken(ctx context.Context, token string) (dbsqlc.RefreshToken, error) {
+	args := m.Called(ctx, token)
+	return args.Get(0).(dbsqlc.RefreshToken), args.Error(1)
+}
+
+func (m *MockQueries) DeleteRefreshToken(ctx context.Context, token string) error {
+	args := m.Called(ctx, token)
+	return args.Error(0)
+}
+
+func (m *MockQueries) DeleteUserRefreshTokens(ctx context.Context, userID int32) error {
+	args := m.Called(ctx, userID)
+	return args.Error(0)
+}
+
 func (m *MockQueries) GetUserByUsername(ctx context.Context, username string) (dbsqlc.User, error) {
 	args := m.Called(ctx, username)
 	return args.Get(0).(dbsqlc.User), args.Error(1)

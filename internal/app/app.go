@@ -17,10 +17,14 @@ dbsqlc "webhooktester/db/sqlc"
 type Config struct {
 	DBHost, DBPort, DBUser, DBPassword, DBName, DBSSLMode string
 	DemoUsername, DemoPassword string
+	JWTSecret string
+	JWTLifetimeMinutes int
+	RefreshTokenLifetimeHours int
 }
 
 type QueriesInterface interface {
 	GetUserByUsername(ctx context.Context, username string) (dbsqlc.User, error)
+	GetUserByID(ctx context.Context, id int32) (dbsqlc.User, error)
 	CreateUser(ctx context.Context, params dbsqlc.CreateUserParams) (dbsqlc.User, error)
 	GetListenersByUser(ctx context.Context, userID int32) ([]dbsqlc.Listener, error)
 	CreateSession(ctx context.Context, arg dbsqlc.CreateSessionParams) (dbsqlc.Session, error)
@@ -30,6 +34,11 @@ type QueriesInterface interface {
 	GetListenerByUUID(ctx context.Context, uuid string) (dbsqlc.Listener, error)
 	CreateRequest(ctx context.Context, arg dbsqlc.CreateRequestParams) (dbsqlc.Request, error)
 	GetRequestsByListener(ctx context.Context, listenerID int32) ([]dbsqlc.Request, error)
+	// Refresh token methods
+	CreateRefreshToken(ctx context.Context, arg dbsqlc.CreateRefreshTokenParams) (dbsqlc.RefreshToken, error)
+	GetRefreshToken(ctx context.Context, token string) (dbsqlc.RefreshToken, error)
+	DeleteRefreshToken(ctx context.Context, token string) error
+	DeleteUserRefreshTokens(ctx context.Context, userID int32) error
 }
 
 type App struct {
@@ -40,6 +49,14 @@ type App struct {
 
 func NewConfigFromEnv() Config {
 	_ = godotenv.Load()
+	jwtLifetime := 5
+	refreshLifetime := 24
+	if v := os.Getenv("JWT_LIFETIME_MINUTES"); v != "" {
+		fmt.Sscanf(v, "%d", &jwtLifetime)
+	}
+	if v := os.Getenv("REFRESH_TOKEN_LIFETIME_HOURS"); v != "" {
+		fmt.Sscanf(v, "%d", &refreshLifetime)
+	}
 	return Config{
 		DBHost:      os.Getenv("DB_HOST"),
 		DBPort:      os.Getenv("DB_PORT"),
@@ -49,6 +66,9 @@ func NewConfigFromEnv() Config {
 		DBSSLMode:   os.Getenv("DB_SSLMODE"),
 		DemoUsername: os.Getenv("DEMO_USERNAME"),
 		DemoPassword: os.Getenv("DEMO_PASSWORD"),
+		JWTSecret:   os.Getenv("JWT_SECRET"),
+		JWTLifetimeMinutes: jwtLifetime,
+		RefreshTokenLifetimeHours: refreshLifetime,
 	}
 }
 
@@ -76,10 +96,11 @@ func (a *App) Run(addr string) error {
 	mux.HandleFunc("/register", a.registerHandler)
 	mux.HandleFunc("/login", a.loginHandler)
 	mux.HandleFunc("/logout", a.logoutHandler)
-	mux.HandleFunc("/", a.withSession(a.indexHandler))
-	mux.HandleFunc("/create-listener", a.withSession(a.createListenerHandler))
-	mux.HandleFunc("/listener/", a.withSession(a.listenerHandler))
-	mux.HandleFunc("/ws/", a.withSession(a.wsHandler))
+	mux.HandleFunc("/refresh", a.refreshHandler)
+	mux.HandleFunc("/", a.withJWT(a.indexHandler))
+	mux.HandleFunc("/create-listener", a.withJWT(a.createListenerHandler))
+	mux.HandleFunc("/listener/", a.withJWT(a.listenerHandler))
+	mux.HandleFunc("/ws/", a.withJWT(a.wsHandler))
 	return http.ListenAndServe(addr, mux)
 }
 
@@ -106,21 +127,20 @@ func (a *App) SetupDemoUser() error {
 	return nil
 }
 
-// withSession is middleware that loads the session and injects username into context.
-func (a *App) withSession(next http.HandlerFunc) http.HandlerFunc {
+// withJWT is middleware that validates JWT and injects username into context.
+func (a *App) withJWT(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie("session_id")
+		cookie, err := r.Cookie("jwt")
 		if err == nil {
-			sess, err := a.Queries.GetSessionByID(r.Context(), cookie.Value)
+			claims, err := ParseJWT(a.Config.JWTSecret, cookie.Value)
 			if err == nil {
-				// Find user by ID
-				userRows, err := a.DB.QueryContext(r.Context(), "SELECT username FROM users WHERE id = $1", sess.UserID)
-				if err == nil && userRows.Next() {
-					var username string
-					userRows.Scan(&username)
-					r = r.WithContext(contextWithUsername(r.Context(), username))
+				userID, ok := claims["user_id"].(float64)
+				if ok {
+					user, err := a.Queries.GetUserByID(r.Context(), int32(userID))
+					if err == nil {
+						r = r.WithContext(contextWithUsername(r.Context(), user.Username))
+					}
 				}
-				userRows.Close()
 			}
 		}
 		next(w, r)

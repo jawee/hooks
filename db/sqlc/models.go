@@ -16,6 +16,14 @@ type Listener struct {
 	CreatedAt time.Time
 }
 
+type RefreshToken struct {
+	ID        int32
+	Token     string
+	UserID    int32
+	ExpiresAt int64
+	CreatedAt int64
+}
+
 type Request struct {
 	ID         int32
 	ListenerID int32

@@ -17,3 +17,9 @@ install-air:
 
 install-templ:
 	go install github.com/a-h/templ/cmd/templ@latest
+
+migrate-up:
+	set -a && source .env && set +a && goose -dir db/migration postgres "host=$$DB_HOST port=$$DB_PORT user=$$DB_USER password=$$DB_PASSWORD dbname=$$DB_NAME sslmode=$$DB_SSLMODE" up
+
+migrate-down:
+	set -a && source .env && set +a && goose -dir db/migration postgres "host=$$DB_HOST port=$$DB_PORT user=$$DB_USER password=$$DB_PASSWORD dbname=$$DB_NAME sslmode=$$DB_SSLMODE" down

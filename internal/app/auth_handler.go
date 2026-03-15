@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"time"
 
 dbsqlc "webhooktester/db/sqlc"
 	"webhooktester/templates"
@@ -87,24 +88,71 @@ func (a *App) loginHandler(w http.ResponseWriter, r *http.Request) {
 		templates.Login("Invalid credentials").Render(r.Context(), w)
 		return
 	}
-	sessionID := newUUID()
-	_, err = a.Queries.CreateSession(r.Context(), dbsqlc.CreateSessionParams{
-		SessionID: sessionID,
+	// Generate JWT
+	jwtToken, err := GenerateJWT(a.Config.JWTSecret, user.ID, a.Config.JWTLifetimeMinutes)
+	if err != nil {
+		templates.Login("Internal error").Render(r.Context(), w)
+		return
+	}
+	// Generate refresh token
+	refreshToken := newUUID()
+	expiresAt := time.Now().Add(time.Duration(a.Config.RefreshTokenLifetimeHours) * time.Hour).Unix()
+	_, err = a.Queries.CreateRefreshToken(r.Context(), dbsqlc.CreateRefreshTokenParams{
+		Token:     refreshToken,
 		UserID:    user.ID,
+		ExpiresAt: expiresAt,
+		CreatedAt: time.Now().Unix(),
 	})
 	if err != nil {
 		templates.Login("Internal error").Render(r.Context(), w)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "session_id", Value: sessionID, Path: "/", HttpOnly: true, MaxAge: 3600})
+	http.SetCookie(w, &http.Cookie{Name: "jwt", Value: jwtToken, Path: "/", HttpOnly: true, MaxAge: a.Config.JWTLifetimeMinutes * 60})
+	http.SetCookie(w, &http.Cookie{Name: "refresh_token", Value: refreshToken, Path: "/", HttpOnly: true, MaxAge: a.Config.RefreshTokenLifetimeHours * 3600})
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-func (a *App) logoutHandler(w http.ResponseWriter, r *http.Request) {
-	cookie, err := r.Cookie("session_id")
-	if err == nil {
-		_ = a.Queries.DeleteSession(r.Context(), cookie.Value)
-		http.SetCookie(w, &http.Cookie{Name: "session_id", Value: "", Path: "/", MaxAge: -1})
+func (a *App) refreshHandler(w http.ResponseWriter, r *http.Request) {
+	refreshCookie, err := r.Cookie("refresh_token")
+	if err != nil {
+		http.Error(w, "No refresh token", http.StatusUnauthorized)
+		return
 	}
+	token, err := a.Queries.GetRefreshToken(r.Context(), refreshCookie.Value)
+	if err != nil || token.ExpiresAt < time.Now().Unix() {
+		http.Error(w, "Invalid or expired refresh token", http.StatusUnauthorized)
+		return
+	}
+	// Issue new JWT and refresh token
+	jwtToken, err := GenerateJWT(a.Config.JWTSecret, token.UserID, a.Config.JWTLifetimeMinutes)
+	if err != nil {
+		http.Error(w, "Failed to generate JWT", http.StatusInternalServerError)
+		return
+	}
+	newRefresh := newUUID()
+	expiresAt := time.Now().Add(time.Duration(a.Config.RefreshTokenLifetimeHours) * time.Hour).Unix()
+	_, err = a.Queries.CreateRefreshToken(r.Context(), dbsqlc.CreateRefreshTokenParams{
+		Token:     newRefresh,
+		UserID:    token.UserID,
+		ExpiresAt: expiresAt,
+		CreatedAt: time.Now().Unix(),
+	})
+	if err != nil {
+		http.Error(w, "Failed to create refresh token", http.StatusInternalServerError)
+		return
+	}
+	_ = a.Queries.DeleteRefreshToken(r.Context(), refreshCookie.Value)
+	http.SetCookie(w, &http.Cookie{Name: "jwt", Value: jwtToken, Path: "/", HttpOnly: true, MaxAge: a.Config.JWTLifetimeMinutes * 60})
+	http.SetCookie(w, &http.Cookie{Name: "refresh_token", Value: newRefresh, Path: "/", HttpOnly: true, MaxAge: a.Config.RefreshTokenLifetimeHours * 3600})
+	w.WriteHeader(http.StatusOK)
+}
+
+func (a *App) logoutHandler(w http.ResponseWriter, r *http.Request) {
+	refreshCookie, err := r.Cookie("refresh_token")
+	if err == nil {
+		_ = a.Queries.DeleteRefreshToken(r.Context(), refreshCookie.Value)
+		http.SetCookie(w, &http.Cookie{Name: "refresh_token", Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+	}
+	http.SetCookie(w, &http.Cookie{Name: "jwt", Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }

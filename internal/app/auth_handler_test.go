@@ -59,7 +59,7 @@ func TestRegisterHandler_Success(t *testing.T) {
 	mock := &MockQueries{}
 	mock.On("GetUserByUsername", mock2.Anything, "bob").Return(dbsqlc.User{}, sql.ErrNoRows)
 	mock.On("CreateUser", mock2.Anything, mock2.Anything).Return(dbsqlc.User{ID: 1, Username: "bob"}, nil)
-mock.On("CreateSession", mock2.Anything, mock2.Anything).Return(dbsqlc.Session{}, nil)
+mock.On("CreateRefreshToken", mock2.Anything, mock2.Anything).Return(dbsqlc.RefreshToken{}, nil)
 	app := &App{Queries: mock}
 	form := "username=bob&password=secret"
 	req := httptest.NewRequest(http.MethodPost, "/register", strings.NewReader(form))
@@ -115,8 +115,8 @@ func TestLoginHandler_DBError(t *testing.T) {
 func TestLoginHandler_Success(t *testing.T) {
 	mock := &MockQueries{}
 	mock.On("GetUserByUsername", mock2.Anything, "bob").Return(dbsqlc.User{ID: 1, Username: "bob", PasswordHash: "secret"}, nil)
-	mock.On("CreateSession", mock2.Anything, mock2.Anything).Return(dbsqlc.Session{}, nil)
-	app := &App{Queries: mock}
+	mock.On("CreateRefreshToken", mock2.Anything, mock2.Anything).Return(dbsqlc.RefreshToken{}, nil)
+	app := &App{Queries: mock, Config: Config{JWTSecret: "testsecret", JWTLifetimeMinutes: 5, RefreshTokenLifetimeHours: 24}}
 	form := "username=bob&password=secret"
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
