@@ -1,5 +1,11 @@
 // WebSocket client for listener page
-function startWebSocket(uuid) {
+async function startWebSocket(uuid) {
+    // Try to refresh JWT before opening WebSocket
+    try {
+        await fetch('/refresh', { method: 'POST', credentials: 'same-origin' });
+    } catch (e) {
+        // Ignore errors; if refresh fails, wsHandler will reject
+    }
     var wsProto = window.location.protocol === "https:" ? "wss://" : "ws://";
     var ws = new WebSocket(wsProto + window.location.host + "/ws/" + uuid);
     ws.onmessage = function(event) {
@@ -58,7 +64,7 @@ function startWebSocket(uuid) {
             bodyDiv.appendChild(bodyLabel);
             bodyDiv.appendChild(pre);
             li.appendChild(bodyDiv);
-            ul.appendChild(li);
+            ul.insertBefore(li, ul.firstChild);
         }
     };
     ws.onclose = function() {

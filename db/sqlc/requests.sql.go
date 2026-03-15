@@ -35,7 +35,7 @@ func (q *Queries) CreateRequest(ctx context.Context, arg CreateRequestParams) (R
 }
 
 const getRequestsByListener = `-- name: GetRequestsByListener :many
-SELECT id, listener_id, timestamp, headers, body FROM requests WHERE listener_id = $1 ORDER BY timestamp ASC
+SELECT id, listener_id, timestamp, headers, body FROM requests WHERE listener_id = $1 ORDER BY timestamp DESC
 `
 
 func (q *Queries) GetRequestsByListener(ctx context.Context, listenerID int32) ([]Request, error) {

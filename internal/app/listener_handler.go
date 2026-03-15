@@ -1,9 +1,11 @@
 package app
 
 import (
+	"bufio"
 	"encoding/json"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -87,7 +89,7 @@ func (a *App) listenerHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to encode headers", http.StatusInternalServerError)
 			return
 		}
-		_, err = a.Queries.CreateRequest(r.Context(), dbsqlc.CreateRequestParams{
+		newReq, err := a.Queries.CreateRequest(r.Context(), dbsqlc.CreateRequestParams{
 			ListenerID: listener.ID,
 			Headers:    headers,
 			Body:       string(body),
@@ -96,6 +98,7 @@ func (a *App) listenerHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to save request", http.StatusInternalServerError)
 			return
 		}
+		notifyWebSocketClients(uuid, newReq)
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -133,6 +136,12 @@ func (a *App) wsHandler(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// Enforce JWT authentication for WebSocket
+	username := getUsername(r)
+	if username == "" {
+		http.Error(w, "Unauthorized: missing or expired JWT", http.StatusUnauthorized)
+		return
+	}
 	if r.Header.Get("Connection") != "Upgrade" || r.Header.Get("Upgrade") != "websocket" {
 		http.Error(w, "Not a websocket handshake", http.StatusBadRequest)
 		return
@@ -142,7 +151,7 @@ func (a *App) wsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "webserver doesn't support hijacking", http.StatusInternalServerError)
 		return
 	}
-	_, bufrw, err := hijacker.Hijack()
+	conn, bufrw, err := hijacker.Hijack()
 	if err != nil {
 		http.Error(w, "hijack failed", http.StatusInternalServerError)
 		return
@@ -154,4 +163,83 @@ func (a *App) wsHandler(w http.ResponseWriter, r *http.Request) {
 	bufrw.WriteString("Connection: Upgrade\r\n")
 	bufrw.WriteString("Sec-WebSocket-Accept: " + accept + "\r\n\r\n")
 	bufrw.Flush()
+
+		// Register this connection for push updates
+	registerWebSocketClient(uuid, bufrw, conn)
+}
+
+// --- WebSocket push infrastructure ---
+
+// global map of uuid to list of clients
+var wsClients = make(map[string][]*wsClient)
+type wsClient struct {
+	w    *bufio.ReadWriter
+	conn net.Conn
+}
+
+func registerWebSocketClient(uuid string, w *bufio.ReadWriter, conn net.Conn) {
+	client := &wsClient{w: w, conn: conn}
+	addClient(uuid, client)
+	defer removeClient(uuid, client)
+	log.Printf("[WS] Registered client for uuid=%s", uuid)
+	// Block until connection closes
+	buf := make([]byte, 1)
+	conn.Read(buf) // will unblock on close
+	log.Printf("[WS] Connection closed for uuid=%s", uuid)
+}
+
+func addClient(uuid string, client *wsClient) {
+	// Not thread safe, but works for single-threaded Go HTTP
+	wsClients[uuid] = append(wsClients[uuid], client)
+}
+
+func removeClient(uuid string, client *wsClient) {
+	clients := wsClients[uuid]
+	for i, c := range clients {
+		if c == client {
+			wsClients[uuid] = append(clients[:i], clients[i+1:]...)
+			break
+		}
+	}
+}
+
+// Call this after saving a new request
+func notifyWebSocketClients(uuid string, req dbsqlc.Request) {
+	msg, _ := json.Marshal(map[string]interface{}{
+		"Timestamp": req.Timestamp.Format(time.RFC3339),
+		"Headers":   json.RawMessage(req.Headers),
+		"Body":      req.Body,
+	})
+	log.Printf("[WS] Notifying %d clients for uuid=%s", len(wsClients[uuid]), uuid)
+	for _, client := range wsClients[uuid] {
+		err := writeWebSocketFrame(client.w, msg)
+		if err != nil {
+			log.Printf("[WS] Error writing to client: %v", err)
+		}
+	}
+}
+
+// writeWebSocketFrame writes a text frame to the WebSocket connection (RFC6455, minimal)
+func writeWebSocketFrame(w *bufio.ReadWriter, payload []byte) error {
+	defer func() {
+		_ = recover() // avoid panic if connection is closed
+	}()
+	w.WriteByte(0x81) // FIN + text frame
+	if len(payload) < 126 {
+		w.WriteByte(byte(len(payload)))
+	} else if len(payload) < 65536 {
+		w.WriteByte(126)
+		w.WriteByte(byte(len(payload) >> 8))
+		w.WriteByte(byte(len(payload)))
+	} else {
+		w.WriteByte(127)
+		for i := 7; i >= 0; i-- {
+			w.WriteByte(byte(len(payload) >> uint(8*i)))
+		}
+	}
+	_, err := w.Write(payload)
+	if err != nil {
+		return err
+	}
+	return w.Flush()
 }
