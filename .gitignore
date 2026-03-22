@@ -29,3 +29,8 @@ node_modules/
 
 # OS files
 Thumbs.db
+
+# Docker
+
+docker/pg_data/
+!docker/pg_data/.gitkeep
