@@ -25,9 +25,13 @@ func computeAcceptKey(key string) string {
 
 func (a *App) indexHandler(w http.ResponseWriter, r *http.Request) {
 	username := getUsername(r)
+	if username == "" {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
 	user, err := a.Queries.GetUserByUsername(r.Context(), username)
 	if err != nil {
-		http.Error(w, "User not found", http.StatusInternalServerError)
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
 	listeners, err := a.Queries.GetListenersByUser(r.Context(), user.ID)
