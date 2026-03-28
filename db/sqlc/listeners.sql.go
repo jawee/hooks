@@ -7,32 +7,35 @@ package db
 
 import (
 	"context"
+	"database/sql"
 )
 
 const createListener = `-- name: CreateListener :one
-INSERT INTO listeners (uuid, user_id) VALUES ($1, $2)
-RETURNING id, uuid, user_id, created_at
+INSERT INTO listeners (uuid, user_id, name) VALUES ($1, $2, $3)
+RETURNING id, uuid, user_id, created_at, name
 `
 
 type CreateListenerParams struct {
 	Uuid   string
 	UserID int32
+	Name   sql.NullString
 }
 
 func (q *Queries) CreateListener(ctx context.Context, arg CreateListenerParams) (Listener, error) {
-	row := q.db.QueryRowContext(ctx, createListener, arg.Uuid, arg.UserID)
+	row := q.db.QueryRowContext(ctx, createListener, arg.Uuid, arg.UserID, arg.Name)
 	var i Listener
 	err := row.Scan(
 		&i.ID,
 		&i.Uuid,
 		&i.UserID,
 		&i.CreatedAt,
+		&i.Name,
 	)
 	return i, err
 }
 
 const getListenersByUser = `-- name: GetListenersByUser :many
-SELECT id, uuid, user_id, created_at FROM listeners WHERE user_id = $1
+SELECT id, uuid, user_id, created_at, name FROM listeners WHERE user_id = $1
 `
 
 func (q *Queries) GetListenersByUser(ctx context.Context, userID int32) ([]Listener, error) {
@@ -49,6 +52,7 @@ func (q *Queries) GetListenersByUser(ctx context.Context, userID int32) ([]Liste
 			&i.Uuid,
 			&i.UserID,
 			&i.CreatedAt,
+			&i.Name,
 		); err != nil {
 			return nil, err
 		}
@@ -61,4 +65,18 @@ func (q *Queries) GetListenersByUser(ctx context.Context, userID int32) ([]Liste
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateListenerName = `-- name: UpdateListenerName :exec
+UPDATE listeners SET name = $2 WHERE uuid = $1
+`
+
+type UpdateListenerNameParams struct {
+	Uuid string
+	Name sql.NullString
+}
+
+func (q *Queries) UpdateListenerName(ctx context.Context, arg UpdateListenerNameParams) error {
+	_, err := q.db.ExecContext(ctx, updateListenerName, arg.Uuid, arg.Name)
+	return err
 }

@@ -5,6 +5,7 @@
 package db
 
 import (
+	"database/sql"
 	"encoding/json"
 	"time"
 )
@@ -14,6 +15,7 @@ type Listener struct {
 	Uuid      string
 	UserID    int32
 	CreatedAt time.Time
+	Name      sql.NullString
 }
 
 type RefreshToken struct {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 
@@ -34,6 +34,7 @@ type QueriesInterface interface {
 	GetListenerByUUID(ctx context.Context, uuid string) (dbsqlc.Listener, error)
 	CreateRequest(ctx context.Context, arg dbsqlc.CreateRequestParams) (dbsqlc.Request, error)
 	GetRequestsByListener(ctx context.Context, listenerID int32) ([]dbsqlc.Request, error)
+	UpdateListenerName(ctx context.Context, arg dbsqlc.UpdateListenerNameParams) error
 	// Refresh token methods
 	CreateRefreshToken(ctx context.Context, arg dbsqlc.CreateRefreshTokenParams) (dbsqlc.RefreshToken, error)
 	GetRefreshToken(ctx context.Context, token string) (dbsqlc.RefreshToken, error)
@@ -90,7 +91,7 @@ func NewApp(cfg Config) (*App, error) {
 
 // Run starts the HTTP server on the given address.
 func (a *App) Run(addr string) error {
-	log.Println("Server started at http://" + addr)
+	slog.Info("Server started", "url", "http://"+addr)
 	mux := http.NewServeMux()
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 	mux.HandleFunc("/register", a.registerHandler)
@@ -116,12 +117,12 @@ func (a *App) SetupDemoUser() error {
 				if err != nil {
 					return fmt.Errorf("Failed to create demo user: %w", err)
 				}
-				log.Printf("[INFO] Demo user '%s' created", a.Config.DemoUsername)
+				slog.Info("Demo user created", "username", a.Config.DemoUsername)
 			} else {
 				return fmt.Errorf("Failed to check demo user: %w", err)
 			}
 		} else {
-			log.Printf("[INFO] Demo user '%s' already exists", a.Config.DemoUsername)
+			slog.Info("Demo user exists", "username", a.Config.DemoUsername)
 		}
 	}
 	return nil
@@ -131,14 +132,20 @@ func (a *App) SetupDemoUser() error {
 func (a *App) withJWT(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cookie, err := r.Cookie("jwt")
+		slog.Debug("withJWT: checking JWT cookie", "cookie", cookie, "err", err)
 		if err == nil {
 			claims, err := ParseJWT(a.Config.JWTSecret, cookie.Value)
+			slog.Debug("withJWT: parsed JWT", "claims", claims, "err", err)
 			if err == nil {
 				userID, ok := claims["user_id"].(float64)
+				slog.Debug("withJWT: userID from claims", "userID", userID, "ok", ok)
 				if ok {
 					user, err := a.Queries.GetUserByID(r.Context(), int32(userID))
+					slog.Debug("withJWT: fetched user by ID", "user", user, "err", err)
 					if err == nil {
 						r = r.WithContext(contextWithUsername(r.Context(), user.Username))
+						// Also set username cookie for legacy handlers
+						http.SetCookie(w, &http.Cookie{Name: "username", Value: user.Username, Path: "/", HttpOnly: true})
 					}
 				}
 			}

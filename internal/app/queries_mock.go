@@ -8,6 +8,8 @@ dbsqlc "webhooktester/db/sqlc"
 )
 
 type MockQueries struct {
+	UpdateListenerNameFunc func(ctx context.Context, arg dbsqlc.UpdateListenerNameParams) error
+
 	mock.Mock
 }
 
@@ -79,6 +81,13 @@ func (m *MockQueries) GetListenerByUUID(ctx context.Context, uuid string) (dbsql
 func (m *MockQueries) CreateRequest(ctx context.Context, arg dbsqlc.CreateRequestParams) (dbsqlc.Request, error) {
 	args := m.Called(ctx, arg)
 	return args.Get(0).(dbsqlc.Request), args.Error(1)
+}
+
+func (m *MockQueries) UpdateListenerName(ctx context.Context, arg dbsqlc.UpdateListenerNameParams) error {
+	if m.UpdateListenerNameFunc != nil {
+		return m.UpdateListenerNameFunc(ctx, arg)
+	}
+	return nil
 }
 
 func (m *MockQueries) GetRequestsByListener(ctx context.Context, listenerID int32) ([]dbsqlc.Request, error) {

@@ -3,6 +3,7 @@ package templates
 import (
 	"webhooktester/templates/layout"
 	"fmt"
+    "os"
 )
 
 type RequestInfo struct {
@@ -11,29 +12,77 @@ type RequestInfo struct {
 	Body      string
 }
 
-templ Listener(uuid string, requests []RequestInfo) {
-	@layout.Base("hooks Listener") {
-		<div class="max-w-2xl mx-auto py-8">
-			<h1 class="text-2xl font-bold mb-2">hooks Listener: <span class="font-mono">{ uuid }</span></h1>
+type ListenerViewModel struct {
+	Uuid        string
+	DisplayName string
+	Requests    []RequestInfo
+}
+
+templ Listener(vm ListenerViewModel) {
+	@layout.Base("hooks Listener")
+<div class="max-w-2xl mx-auto py-8">
+			<h1 class="text-2xl font-bold mb-2 flex flex-col gap-1">hooks Listener:
+<span id="listener-name" class="inline-block">{vm.DisplayName}<button id="edit-name-btn" class="ml-2 text-xs text-blue-600 underline">Edit</button></span>
+	<form id="edit-name-form" class="hidden inline-block" style="margin-left: 0.5em;">
+		<input id="edit-name-input" name="name" class="border rounded px-2 py-1 text-sm" value={vm.DisplayName} placeholder="Listener name" />
+		<button type="submit" class="ml-1 px-2 py-1 text-xs bg-blue-600 text-white rounded">Save</button>
+		<button type="button" id="cancel-edit-name" class="ml-1 px-2 py-1 text-xs bg-gray-300 rounded">Cancel</button>
+	</form>
+</h1>
+<div class="text-xs text-gray-500 mt-1">UUID: <span class="font-mono">{vm.Uuid}</span></div>
+
 			<div class="mb-6">
 				<div class="text-gray-700 font-semibold mb-1">Send your webhook to:</div>
 				<div class="flex items-center bg-gray-100 rounded px-3 py-2">
-					<span class="font-mono text-blue-700 select-all" id="webhook-url">http://localhost:8080/listener/{ uuid }</span>
+					<span class="font-mono text-blue-700 select-all" id="webhook-url">http://localhost:{os.Getenv("PORT")}/listener/{vm.Uuid}</span>
 					<button onclick="navigator.clipboard.writeText(document.getElementById('webhook-url').innerText)" class="ml-3 px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 transition">Copy</button>
 				</div>
 			</div>
 			<h2 class="text-lg font-semibold mb-4">Received Requests</h2>
 			<ul id="requests" class="space-y-4">
-				for idx, req := range requests {
+				for idx, req := range vm.Requests {
 					@listenerRequestItem(idx, req)
 				}
 			</ul>
-			if len(requests) == 0 {
+			if len(vm.Requests) == 0 {
 				<p id="requests-empty" class="text-gray-500">No requests received yet.</p>
 			}
 			<a href="/" class="inline-block mt-6 text-blue-700 underline">Back to Home</a>
 		</div>
 		<script>
+		// Inline name editing logic
+		document.addEventListener('DOMContentLoaded', function() {
+			const editBtn = document.getElementById('edit-name-btn');
+			const nameSpan = document.getElementById('listener-name');
+			const form = document.getElementById('edit-name-form');
+			const input = document.getElementById('edit-name-input');
+			const cancelBtn = document.getElementById('cancel-edit-name');
+			if (editBtn && form && nameSpan && input && cancelBtn) {
+				editBtn.addEventListener('click', function() {
+					form.classList.remove('hidden');
+					editBtn.classList.add('hidden');
+					input.focus();
+				});
+				cancelBtn.addEventListener('click', function() {
+					form.classList.add('hidden');
+					editBtn.classList.remove('hidden');
+				});
+				form.addEventListener('submit', function(e) {
+					e.preventDefault();
+					fetch(window.location.pathname, {
+						method: 'PUT',
+						headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+						body: 'name=' + encodeURIComponent(input.value)
+					}).then(resp => {
+						if (resp.ok) {
+							window.location.reload();
+						} else {
+							alert('Failed to update name');
+						}
+					});
+				});
+			}
+		});
 		// Toggle headers on button click
 		document.addEventListener('DOMContentLoaded', function() {
 			document.querySelectorAll('[data-toggle^="headers-"]').forEach(function(btn) {
@@ -48,9 +97,8 @@ templ Listener(uuid string, requests []RequestInfo) {
 		});
 		</script>
 		<script src="/static/ws.js"></script>
-		@templ.Raw(fmt.Sprintf("<script>startWebSocket(\"%s\");</script>", uuid))
+		@templ.Raw(fmt.Sprintf("<script>startWebSocket(\"%s\");</script>", vm.Uuid))
 	}
-}
 
 templ listenerRequestItem(idx int, req RequestInfo) {
 	<li class="border rounded-lg bg-white shadow p-4">

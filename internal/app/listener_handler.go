@@ -2,17 +2,18 @@ package app
 
 import (
 	"bufio"
+	"crypto/sha1"
+	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
 	"time"
-	"encoding/base64"
-	"crypto/sha1"
 
-dbsqlc "webhooktester/db/sqlc"
+	dbsqlc "webhooktester/db/sqlc"
 	"webhooktester/templates"
 )
 
@@ -25,25 +26,35 @@ func computeAcceptKey(key string) string {
 
 func (a *App) indexHandler(w http.ResponseWriter, r *http.Request) {
 	username := getUsername(r)
+	slog.Debug("indexHandler: username", "username", username)
 	if username == "" {
+		slog.Debug("indexHandler: username empty, redirecting to /login")
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
 	user, err := a.Queries.GetUserByUsername(r.Context(), username)
+	slog.Debug("indexHandler: fetched user", "user", user, "err", err)
 	if err != nil {
+		slog.Debug("indexHandler: user fetch error, redirecting to /login", "err", err)
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
 	listeners, err := a.Queries.GetListenersByUser(r.Context(), user.ID)
+	slog.Debug("indexHandler: fetched listeners", "listeners", listeners, "err", err)
 	if err != nil {
-		http.Error(w, "Failed to fetch listeners", http.StatusInternalServerError)
+		slog.Debug("indexHandler: listeners fetch error, redirecting to /login", "err", err)
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	var uuids []string
+	var listenerInfos []templates.ListenerInfo
 	for _, l := range listeners {
-		uuids = append(uuids, l.Uuid)
+		displayName := l.Uuid
+		if l.Name.Valid {
+			displayName = l.Name.String
+		}
+		listenerInfos = append(listenerInfos, templates.ListenerInfo{Uuid: l.Uuid, Name: l.Name, DisplayName: displayName})
 	}
-	templates.Index(username, uuids).Render(r.Context(), w)
+	templates.Index(username, listenerInfos).Render(r.Context(), w)
 }
 
 func (a *App) createListenerHandler(w http.ResponseWriter, r *http.Request) {
@@ -52,27 +63,68 @@ func (a *App) createListenerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	username := getUsername(r)
-	log.Printf("[DEBUG] createListenerHandler: username=%v", username)
+	slog.Debug("createListenerHandler", "username", username)
 	user, err := a.Queries.GetUserByUsername(r.Context(), username)
 	if err != nil {
-		http.Error(w, "User not found", http.StatusInternalServerError)
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
 	uuid := newUUID()
 	_, err = a.Queries.CreateListener(r.Context(), dbsqlc.CreateListenerParams{
 		Uuid:   uuid,
 		UserID: user.ID,
+		Name:   sql.NullString{},
 	})
 	if err != nil {
 		http.Error(w, "Failed to create listener", http.StatusInternalServerError)
 		return
 	}
-	log.Printf("[DEBUG] createListenerHandler: created uuid=%v for user=%v", uuid, username)
+	slog.Debug("createListenerHandler created", "uuid", uuid, "user", username)
 	http.Redirect(w, r, "/listener/"+uuid, http.StatusSeeOther)
 }
 
 func (a *App) listenerHandler(w http.ResponseWriter, r *http.Request) {
-	uuid := r.URL.Path[len("/listener/") :]
+	if r.Method == http.MethodPut {
+		uuid := r.URL.Path[len("/listener/"):]
+		if uuid == "" {
+			http.NotFound(w, r)
+			return
+		}
+		username := getUsername(r)
+		if username == "" {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		user, err := a.Queries.GetUserByUsername(r.Context(), username)
+		if err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		listener, err := a.Queries.GetListenerByUUID(r.Context(), uuid)
+		if err != nil || listener.UserID != user.ID {
+			http.NotFound(w, r)
+			return
+		}
+		name := r.FormValue("name")
+		var sqlName sql.NullString
+		if name != "" {
+			sqlName = sql.NullString{String: name, Valid: true}
+		} else {
+			sqlName = sql.NullString{}
+		}
+		err = a.Queries.UpdateListenerName(r.Context(), dbsqlc.UpdateListenerNameParams{
+			Uuid: uuid,
+			Name: sqlName,
+		})
+		if err != nil {
+			http.Error(w, "Failed to update name", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	uuid := r.URL.Path[len("/listener/"):]
 	if uuid == "" {
 		http.NotFound(w, r)
 		return
@@ -131,7 +183,17 @@ func (a *App) listenerHandler(w http.ResponseWriter, r *http.Request) {
 			Body:      req.Body,
 		}
 	}
-	templates.Listener(uuid, templReqs).Render(r.Context(), w)
+	vm := templates.ListenerViewModel{
+		Uuid: uuid,
+		DisplayName: func() string {
+			if listener.Name.Valid && listener.Name.String != "" {
+				return listener.Name.String
+			}
+			return uuid
+		}(),
+		Requests: templReqs,
+	}
+	templates.Listener(vm).Render(r.Context(), w)
 }
 
 func (a *App) wsHandler(w http.ResponseWriter, r *http.Request) {
@@ -168,7 +230,7 @@ func (a *App) wsHandler(w http.ResponseWriter, r *http.Request) {
 	bufrw.WriteString("Sec-WebSocket-Accept: " + accept + "\r\n\r\n")
 	bufrw.Flush()
 
-		// Register this connection for push updates
+	// Register this connection for push updates
 	registerWebSocketClient(uuid, bufrw, conn)
 }
 
@@ -176,6 +238,7 @@ func (a *App) wsHandler(w http.ResponseWriter, r *http.Request) {
 
 // global map of uuid to list of clients
 var wsClients = make(map[string][]*wsClient)
+
 type wsClient struct {
 	w    *bufio.ReadWriter
 	conn net.Conn
@@ -185,11 +248,11 @@ func registerWebSocketClient(uuid string, w *bufio.ReadWriter, conn net.Conn) {
 	client := &wsClient{w: w, conn: conn}
 	addClient(uuid, client)
 	defer removeClient(uuid, client)
-	log.Printf("[WS] Registered client for uuid=%s", uuid)
+	slog.Debug("ws: registered client", "uuid", uuid)
 	// Block until connection closes
 	buf := make([]byte, 1)
 	conn.Read(buf) // will unblock on close
-	log.Printf("[WS] Connection closed for uuid=%s", uuid)
+	slog.Debug("ws: connection closed", "uuid", uuid)
 }
 
 func addClient(uuid string, client *wsClient) {
@@ -209,16 +272,16 @@ func removeClient(uuid string, client *wsClient) {
 
 // Call this after saving a new request
 func notifyWebSocketClients(uuid string, req dbsqlc.Request) {
-	msg, _ := json.Marshal(map[string]interface{}{
+	msg, _ := json.Marshal(map[string]any{
 		"Timestamp": req.Timestamp.Format(time.RFC3339),
 		"Headers":   json.RawMessage(req.Headers),
 		"Body":      req.Body,
 	})
-	log.Printf("[WS] Notifying %d clients for uuid=%s", len(wsClients[uuid]), uuid)
+	slog.Debug("ws: notifying clients", "count", len(wsClients[uuid]), "uuid", uuid)
 	for _, client := range wsClients[uuid] {
 		err := writeWebSocketFrame(client.w, msg)
 		if err != nil {
-			log.Printf("[WS] Error writing to client: %v", err)
+			slog.Debug("ws: error writing to client", "error", err)
 		}
 	}
 }

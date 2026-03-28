@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"net/http"
 	"time"
+	"log/slog"
 
 dbsqlc "webhooktester/db/sqlc"
 	"webhooktester/templates"
@@ -22,13 +23,23 @@ func contextWithUsername(ctx context.Context, username string) context.Context {
 
 func getUsername(r *http.Request) string {
 	v := r.Context().Value(usernameKey)
-	if s, ok := v.(string); ok {
+	slog.Debug("getUsername called", "contextValue", v)
+	if s, ok := v.(string); ok && s != "" {
+		slog.Debug("getUsername: found in context", "username", s)
 		return s
 	}
+	cookie, err := r.Cookie("username")
+	slog.Debug("getUsername: checking username cookie", "cookie", cookie, "err", err)
+	if err == nil && cookie.Value != "" {
+		slog.Debug("getUsername: found in cookie", "username", cookie.Value)
+		return cookie.Value
+	}
+	slog.Debug("getUsername: not found, returning empty string")
 	return ""
 }
 
 func (a *App) registerHandler(w http.ResponseWriter, r *http.Request) {
+	slog.Debug("registerHandler called")
 	if r.Method == http.MethodGet {
 		templates.Register("").Render(r.Context(), w)
 		return
@@ -73,24 +84,32 @@ func newUUID() string {
 }
 
 func (a *App) loginHandler(w http.ResponseWriter, r *http.Request) {
+	slog.Debug("loginHandler called", "method", r.Method)
 	if r.Method == http.MethodGet {
+		slog.Debug("loginHandler: GET, rendering login page")
 		templates.Login("").Render(r.Context(), w)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
+		slog.Debug("loginHandler: form parse error", "err", err)
 		templates.Login("Invalid form").Render(r.Context(), w)
 		return
 	}
 	username := r.FormValue("username")
 	password := r.FormValue("password")
+	slog.Debug("loginHandler: form values", "username", username, "password", password)
 	user, err := a.Queries.GetUserByUsername(r.Context(), username)
+	slog.Debug("loginHandler: fetched user", "user", user, "err", err)
 	if err != nil || user.PasswordHash != password {
+		slog.Debug("loginHandler: invalid credentials", "err", err, "user.PasswordHash", user.PasswordHash)
 		templates.Login("Invalid credentials").Render(r.Context(), w)
 		return
 	}
 	// Generate JWT
 	jwtToken, err := GenerateJWT(a.Config.JWTSecret, user.ID, a.Config.JWTLifetimeMinutes)
+	slog.Debug("loginHandler: generated JWT", "jwtToken", jwtToken, "err", err)
 	if err != nil {
+		slog.Debug("loginHandler: JWT generation error", "err", err)
 		templates.Login("Internal error").Render(r.Context(), w)
 		return
 	}
@@ -103,16 +122,20 @@ func (a *App) loginHandler(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt: expiresAt,
 		CreatedAt: time.Now().Unix(),
 	})
+	slog.Debug("loginHandler: created refresh token", "refreshToken", refreshToken, "err", err)
 	if err != nil {
+		slog.Debug("loginHandler: refresh token creation error", "err", err)
 		templates.Login("Internal error").Render(r.Context(), w)
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: "jwt", Value: jwtToken, Path: "/", HttpOnly: true, MaxAge: a.Config.JWTLifetimeMinutes * 60})
 	http.SetCookie(w, &http.Cookie{Name: "refresh_token", Value: refreshToken, Path: "/", HttpOnly: true, MaxAge: a.Config.RefreshTokenLifetimeHours * 3600})
+	slog.Debug("loginHandler: set cookies and redirecting to /")
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (a *App) refreshHandler(w http.ResponseWriter, r *http.Request) {
+	slog.Debug("refreshHandler called")
 	refreshCookie, err := r.Cookie("refresh_token")
 	if err != nil {
 		http.Error(w, "No refresh token", http.StatusUnauthorized)
@@ -148,6 +171,7 @@ func (a *App) refreshHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) logoutHandler(w http.ResponseWriter, r *http.Request) {
+	slog.Debug("logoutHandler called")
 	refreshCookie, err := r.Cookie("refresh_token")
 	if err == nil {
 		_ = a.Queries.DeleteRefreshToken(r.Context(), refreshCookie.Value)

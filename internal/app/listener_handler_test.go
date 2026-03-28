@@ -18,8 +18,11 @@ func TestIndexHandler_Unauthenticated(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rw := httptest.NewRecorder()
 	app.indexHandler(rw, req)
-	if rw.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500, got %d", rw.Code)
+	if rw.Code != http.StatusSeeOther {
+		t.Errorf("expected 303 redirect, got %d", rw.Code)
+	}
+	if loc := rw.Header().Get("Location"); loc != "/login" {
+		t.Errorf("expected redirect to /login, got %q", loc)
 	}
 }
 
@@ -28,7 +31,9 @@ func TestIndexHandler_Success(t *testing.T) {
 	mock.On("GetUserByUsername", mock2.Anything, mock2.Anything).Return(dbsqlc.User{ID: 1, Username: "bob"}, nil)
 	mock.On("GetListenersByUser", mock2.Anything, int32(1)).Return([]dbsqlc.Listener{{Uuid: "abc"}}, nil)
 	app := &App{Queries: mock}
+	// Simulate authenticated user by setting username cookie
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: "username", Value: "bob"})
 	rw := httptest.NewRecorder()
 	app.indexHandler(rw, req)
 	if rw.Code != http.StatusOK {
@@ -47,8 +52,11 @@ func TestIndexHandler_DBError(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rw := httptest.NewRecorder()
 	app.indexHandler(rw, req)
-	if rw.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500, got %d", rw.Code)
+	if rw.Code != http.StatusSeeOther {
+		t.Errorf("expected 303 redirect, got %d", rw.Code)
+	}
+	if loc := rw.Header().Get("Location"); loc != "/login" {
+		t.Errorf("expected redirect to /login, got %q", loc)
 	}
 }
 
@@ -59,8 +67,11 @@ func TestCreateListenerHandler_Unauthenticated(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/listener", nil)
 	rw := httptest.NewRecorder()
 	app.createListenerHandler(rw, req)
-	if rw.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500, got %d", rw.Code)
+	if rw.Code != http.StatusSeeOther {
+		t.Errorf("expected 303 redirect, got %d", rw.Code)
+	}
+	if loc := rw.Header().Get("Location"); loc != "/login" {
+		t.Errorf("expected redirect to /login, got %q", loc)
 	}
 }
 

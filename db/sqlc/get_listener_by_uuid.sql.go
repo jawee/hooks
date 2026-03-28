@@ -10,7 +10,7 @@ import (
 )
 
 const getListenerByUUID = `-- name: GetListenerByUUID :one
-SELECT id, uuid, user_id, created_at FROM listeners WHERE uuid = $1
+SELECT id, uuid, user_id, created_at, name FROM listeners WHERE uuid = $1
 `
 
 func (q *Queries) GetListenerByUUID(ctx context.Context, uuid string) (Listener, error) {
@@ -21,6 +21,7 @@ func (q *Queries) GetListenerByUUID(ctx context.Context, uuid string) (Listener,
 		&i.Uuid,
 		&i.UserID,
 		&i.CreatedAt,
+		&i.Name,
 	)
 	return i, err
 }
