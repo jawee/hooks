@@ -1,10 +1,10 @@
 package app
 
 import (
+	"github.com/stretchr/testify/mock"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"github.com/stretchr/testify/mock"
 	dbsqlc "webhooktester/db/sqlc"
 )
 

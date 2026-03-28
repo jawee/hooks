@@ -4,7 +4,7 @@ import (
 	"context"
 	"github.com/stretchr/testify/mock"
 
-dbsqlc "webhooktester/db/sqlc"
+	dbsqlc "webhooktester/db/sqlc"
 )
 
 type MockQueries struct {
@@ -94,4 +94,3 @@ func (m *MockQueries) GetRequestsByListener(ctx context.Context, listenerID int3
 	args := m.Called(ctx, listenerID)
 	return args.Get(0).([]dbsqlc.Request), args.Error(1)
 }
-

@@ -1,8 +1,8 @@
 package app
 
 import (
-	"time"
 	"github.com/golang-jwt/jwt/v5"
+	"time"
 )
 
 func GenerateJWT(secret string, userID int32, lifetimeMinutes int) (string, error) {
@@ -15,7 +15,7 @@ func GenerateJWT(secret string, userID int32, lifetimeMinutes int) (string, erro
 }
 
 func ParseJWT(secret, tokenStr string) (jwt.MapClaims, error) {
-	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
+	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (any, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, jwt.ErrSignatureInvalid
 		}

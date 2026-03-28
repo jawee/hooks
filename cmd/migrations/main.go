@@ -6,9 +6,9 @@ import (
 	"log"
 	"os"
 
+	"embed"
 	_ "github.com/lib/pq"
 	"github.com/pressly/goose/v3"
-	"embed"
 )
 
 //go:embed migrations/*.sql

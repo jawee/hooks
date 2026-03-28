@@ -1,13 +1,13 @@
 package app
 
 import (
+	"database/sql"
+	"github.com/stretchr/testify/assert"
+	mock2 "github.com/stretchr/testify/mock"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"database/sql"
-	"github.com/stretchr/testify/assert"
-	mock2 "github.com/stretchr/testify/mock"
 	dbsqlc "webhooktester/db/sqlc"
 )
 
@@ -59,7 +59,7 @@ func TestRegisterHandler_Success(t *testing.T) {
 	mock := &MockQueries{}
 	mock.On("GetUserByUsername", mock2.Anything, "bob").Return(dbsqlc.User{}, sql.ErrNoRows)
 	mock.On("CreateUser", mock2.Anything, mock2.Anything).Return(dbsqlc.User{ID: 1, Username: "bob"}, nil)
-mock.On("CreateRefreshToken", mock2.Anything, mock2.Anything).Return(dbsqlc.RefreshToken{}, nil)
+	mock.On("CreateRefreshToken", mock2.Anything, mock2.Anything).Return(dbsqlc.RefreshToken{}, nil)
 	app := &App{Queries: mock}
 	form := "username=bob&password=secret"
 	req := httptest.NewRequest(http.MethodPost, "/register", strings.NewReader(form))
@@ -126,5 +126,3 @@ func TestLoginHandler_Success(t *testing.T) {
 		t.Errorf("expected redirect, got %d", rw.Code)
 	}
 }
-
-

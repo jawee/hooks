@@ -1,13 +1,13 @@
 package app
 
 import (
-	"net/http"
-	"net/http/httptest"
-	"testing"
 	"fmt"
-	"strings"
 	"github.com/stretchr/testify/assert"
 	mock2 "github.com/stretchr/testify/mock"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
 	dbsqlc "webhooktester/db/sqlc"
 )
 
@@ -100,5 +100,3 @@ func TestCreateListenerHandler_DBError(t *testing.T) {
 		t.Errorf("expected 500, got %d", rw.Code)
 	}
 }
-
-

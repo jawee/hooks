@@ -19,8 +19,8 @@ func main() {
 		log.Fatal(err)
 	}
 	port := os.Getenv("PORT")
-if port == "" {
-	port = "8080"
-}
-log.Fatal(myApp.Run(":" + port)) // TODO: Implement Run method in internal/app
+	if port == "" {
+		port = "8080"
+	}
+	log.Fatal(myApp.Run(":" + port)) // TODO: Implement Run method in internal/app
 }

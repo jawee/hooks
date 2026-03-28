@@ -8,18 +8,18 @@ import (
 	"net/http"
 	"os"
 
-	_ "github.com/lib/pq"
 	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 
-dbsqlc "webhooktester/db/sqlc"
+	dbsqlc "webhooktester/db/sqlc"
 )
 
 type Config struct {
 	DBHost, DBPort, DBUser, DBPassword, DBName, DBSSLMode string
-	DemoUsername, DemoPassword string
-	JWTSecret string
-	JWTLifetimeMinutes int
-	RefreshTokenLifetimeHours int
+	DemoUsername, DemoPassword                            string
+	JWTSecret                                             string
+	JWTLifetimeMinutes                                    int
+	RefreshTokenLifetimeHours                             int
 }
 
 type QueriesInterface interface {
@@ -59,16 +59,16 @@ func NewConfigFromEnv() Config {
 		fmt.Sscanf(v, "%d", &refreshLifetime)
 	}
 	return Config{
-		DBHost:      os.Getenv("DB_HOST"),
-		DBPort:      os.Getenv("DB_PORT"),
-		DBUser:      os.Getenv("DB_USER"),
-		DBPassword:  os.Getenv("DB_PASSWORD"),
-		DBName:      os.Getenv("DB_NAME"),
-		DBSSLMode:   os.Getenv("DB_SSLMODE"),
-		DemoUsername: os.Getenv("DEMO_USERNAME"),
-		DemoPassword: os.Getenv("DEMO_PASSWORD"),
-		JWTSecret:   os.Getenv("JWT_SECRET"),
-		JWTLifetimeMinutes: jwtLifetime,
+		DBHost:                    os.Getenv("DB_HOST"),
+		DBPort:                    os.Getenv("DB_PORT"),
+		DBUser:                    os.Getenv("DB_USER"),
+		DBPassword:                os.Getenv("DB_PASSWORD"),
+		DBName:                    os.Getenv("DB_NAME"),
+		DBSSLMode:                 os.Getenv("DB_SSLMODE"),
+		DemoUsername:              os.Getenv("DEMO_USERNAME"),
+		DemoPassword:              os.Getenv("DEMO_PASSWORD"),
+		JWTSecret:                 os.Getenv("JWT_SECRET"),
+		JWTLifetimeMinutes:        jwtLifetime,
 		RefreshTokenLifetimeHours: refreshLifetime,
 	}
 }
@@ -153,4 +153,3 @@ func (a *App) withJWT(next http.HandlerFunc) http.HandlerFunc {
 		next(w, r)
 	}
 }
-

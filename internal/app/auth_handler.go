@@ -3,14 +3,14 @@ package app
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 	"net/http"
 	"time"
-	"log/slog"
 
-dbsqlc "webhooktester/db/sqlc"
-	"webhooktester/templates"
-	"encoding/hex"
 	"crypto/rand"
+	"encoding/hex"
+	dbsqlc "webhooktester/db/sqlc"
+	"webhooktester/templates"
 )
 
 const usernameKey = contextKey("username")
