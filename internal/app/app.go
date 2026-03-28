@@ -15,11 +15,17 @@ import (
 )
 
 type Config struct {
-	DBHost, DBPort, DBUser, DBPassword, DBName, DBSSLMode string
-	DemoUsername, DemoPassword                            string
-	JWTSecret                                             string
-	JWTLifetimeMinutes                                    int
-	RefreshTokenLifetimeHours                             int
+	DBHost                    string
+	DBPort                    string
+	DBUser                    string
+	DBPassword                string
+	DBName                    string
+	DBSSLMode                 string
+	DemoUsername              string
+	DemoPassword              string
+	JWTSecret                 string
+	JWTLifetimeMinutes        int
+	RefreshTokenLifetimeHours int
 }
 
 type QueriesInterface interface {
