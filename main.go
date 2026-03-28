@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	h := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	h := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(h)
 	cfg := app.NewConfigFromEnv()
 	myApp, err := app.NewApp(cfg)

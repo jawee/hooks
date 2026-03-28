@@ -25,10 +25,15 @@ templ Listener(vm ListenerViewModel) {
 		<h1 class="text-2xl font-bold mb-2 flex flex-col gap-1">
 			hooks Listener:
 			<span id="listener-name" class="inline-block">{ vm.DisplayName }<button id="edit-name-btn" class="ml-2 text-xs text-blue-600 underline">Edit</button>
-				<form method="POST" action="/delete-listener" class="inline ml-2" onsubmit="return confirm('Delete this listener?');">
-					<input type="hidden" name="uuid" value={vm.Uuid} />
-					<button type="submit" class="px-2 py-1 bg-red-100 text-red-700 rounded text-xs font-semibold hover:bg-red-200 transition">Delete</button>
-				</form></span>
+				<button 
+	hx-delete={ "/listeners/" + vm.Uuid }
+	hx-confirm="Delete this listener?"
+	hx-target="body"
+	hx-swap="none"
+	class="px-2 py-1 bg-red-100 text-red-700 rounded text-xs font-semibold hover:bg-red-200 transition ml-2"
+>
+	Delete
+</button></span>
 			<form id="edit-name-form" class="hidden inline-block" style="margin-left: 0.5em;">
 				<input id="edit-name-input" name="name" class="border rounded px-2 py-1 text-sm" value={ vm.DisplayName } placeholder="Listener name"/>
 				<button type="submit" class="ml-1 px-2 py-1 text-xs bg-blue-600 text-white rounded">Save</button>

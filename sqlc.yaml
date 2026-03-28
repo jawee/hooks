@@ -4,7 +4,7 @@ version: "2"
 sql:
   - engine: "postgresql"
     queries: "db/query/"
-    schema: "db/migration/"
+    schema: "cmd/migrations/migrations/"
     gen:
       go:
         package: "db"

@@ -7,3 +7,6 @@ RETURNING *;
 
 -- name: UpdateListenerName :exec
 UPDATE listeners SET name = $2 WHERE uuid = $1;
+
+-- name: DeleteListener :exec
+DELETE FROM listeners WHERE uuid = $1;

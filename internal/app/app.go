@@ -38,6 +38,7 @@ type QueriesInterface interface {
 	GetSessionByID(ctx context.Context, sessionID string) (dbsqlc.Session, error)
 	CreateListener(ctx context.Context, arg dbsqlc.CreateListenerParams) (dbsqlc.Listener, error)
 	GetListenerByUUID(ctx context.Context, uuid string) (dbsqlc.Listener, error)
+	DeleteListener(ctx context.Context, uuid string) error
 	CreateRequest(ctx context.Context, arg dbsqlc.CreateRequestParams) (dbsqlc.Request, error)
 	GetRequestsByListener(ctx context.Context, listenerID int32) ([]dbsqlc.Request, error)
 	UpdateListenerName(ctx context.Context, arg dbsqlc.UpdateListenerNameParams) error
@@ -100,13 +101,15 @@ func (a *App) Run(addr string) error {
 	slog.Info("Server started", "url", "http://"+addr)
 	mux := http.NewServeMux()
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/listeners", http.StatusSeeOther)
+	})
 	mux.HandleFunc("/register", a.registerHandler)
 	mux.HandleFunc("/login", a.loginHandler)
 	mux.HandleFunc("/logout", a.logoutHandler)
 	mux.HandleFunc("/refresh", a.refreshHandler)
-	mux.HandleFunc("/", a.withJWT(a.indexHandler))
-	mux.HandleFunc("/create-listener", a.withJWT(a.createListenerHandler))
-	mux.HandleFunc("/listener/", a.withJWT(a.listenerHandler))
+	mux.HandleFunc("/listeners", a.withJWT(a.listenersHandler))
+	mux.HandleFunc("/listeners/", a.withJWT(a.listenerRESTHandler))
 	mux.HandleFunc("/ws/", a.withJWT(a.wsHandler))
 	return http.ListenAndServe(addr, mux)
 }

@@ -24,25 +24,36 @@ func computeAcceptKey(key string) string {
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
 }
 
-func (a *App) indexHandler(w http.ResponseWriter, r *http.Request) {
+func (a *App) listenersHandler(w http.ResponseWriter, r *http.Request) {
 	username := getUsername(r)
-	slog.Debug("indexHandler: username", "username", username)
+	slog.Debug("listenersHandler: username", "username", username)
 	if username == "" {
-		slog.Debug("indexHandler: username empty, redirecting to /login")
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
 	user, err := a.Queries.GetUserByUsername(r.Context(), username)
-	slog.Debug("indexHandler: fetched user", "user", user, "err", err)
+	slog.Debug("listenersHandler: fetched user", "user", user, "err", err)
 	if err != nil {
-		slog.Debug("indexHandler: user fetch error, redirecting to /login", "err", err)
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
+	if r.Method == http.MethodPost {
+		uuid := newUUID()
+		_, err = a.Queries.CreateListener(r.Context(), dbsqlc.CreateListenerParams{
+			Uuid:   uuid,
+			UserID: user.ID,
+			Name:   sql.NullString{},
+		})
+		if err != nil {
+			http.Error(w, "Failed to create listener", http.StatusInternalServerError)
+			return
+		}
+		http.Redirect(w, r, "/listeners/"+uuid, http.StatusSeeOther)
+		return
+	}
 	listeners, err := a.Queries.GetListenersByUser(r.Context(), user.ID)
-	slog.Debug("indexHandler: fetched listeners", "listeners", listeners, "err", err)
+	slog.Debug("listenersHandler: fetched listeners", "listeners", listeners, "err", err)
 	if err != nil {
-		slog.Debug("indexHandler: listeners fetch error, redirecting to /login", "err", err)
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
@@ -56,31 +67,90 @@ func (a *App) indexHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	templates.Index(username, listenerInfos).Render(r.Context(), w)
 }
-
-func (a *App) createListenerHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+func (a *App) listenerRESTHandler(w http.ResponseWriter, r *http.Request) {
+	uuid := strings.TrimPrefix(r.URL.Path, "/listeners/")
+	if uuid == "" {
+		http.NotFound(w, r)
 		return
 	}
 	username := getUsername(r)
-	slog.Debug("createListenerHandler", "username", username)
+	if username == "" {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
 	user, err := a.Queries.GetUserByUsername(r.Context(), username)
 	if err != nil {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	uuid := newUUID()
-	_, err = a.Queries.CreateListener(r.Context(), dbsqlc.CreateListenerParams{
-		Uuid:   uuid,
-		UserID: user.ID,
-		Name:   sql.NullString{},
-	})
-	if err != nil {
-		http.Error(w, "Failed to create listener", http.StatusInternalServerError)
+	listener, err := a.Queries.GetListenerByUUID(r.Context(), uuid)
+	if err != nil || listener.UserID != user.ID {
+		http.NotFound(w, r)
 		return
 	}
-	slog.Debug("createListenerHandler created", "uuid", uuid, "user", username)
-	http.Redirect(w, r, "/listener/"+uuid, http.StatusSeeOther)
+	switch r.Method {
+	case http.MethodGet:
+		// Render listener view
+		requests, _ := a.Queries.GetRequestsByListener(r.Context(), listener.ID)
+		var reqInfos []templates.RequestInfo
+		for _, req := range requests {
+			var hdrs map[string][]string
+			_ = json.Unmarshal(req.Headers, &hdrs)
+			reqInfos = append(reqInfos, templates.RequestInfo{
+				Timestamp: req.Timestamp.Format("2006-01-02 15:04:05"),
+				Headers:   hdrs,
+				Body:      string(req.Body),
+			})
+		}
+		vm := templates.ListenerViewModel{
+			Uuid:        listener.Uuid,
+			DisplayName: listener.Uuid,
+			Requests:    reqInfos,
+		}
+		if listener.Name.Valid {
+			vm.DisplayName = listener.Name.String
+		}
+		templates.Listener(vm).Render(r.Context(), w)
+	case http.MethodPut:
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Invalid form", http.StatusBadRequest)
+			return
+		}
+		name := r.FormValue("name")
+		var sqlName sql.NullString
+		if name != "" {
+			sqlName = sql.NullString{String: name, Valid: true}
+		} else {
+			sqlName = sql.NullString{}
+		}
+		err = a.Queries.UpdateListenerName(r.Context(), dbsqlc.UpdateListenerNameParams{
+			Uuid: uuid,
+			Name: sqlName,
+		})
+		if err != nil {
+			http.Error(w, "Failed to update name", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	case http.MethodDelete:
+		err = a.Queries.DeleteListener(r.Context(), uuid)
+		if err != nil {
+			slog.Error("Failed to delete listener", "uuid", uuid, "error", err)
+		http.Error(w, "Failed to delete listener", http.StatusInternalServerError)
+			return
+		}
+		// HTMX redirect after delete
+		if r.Header.Get("HX-Request") == "true" {
+			w.Header().Set("HX-Redirect", "/listeners")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		// Fallback for non-HTMX requests
+		http.Redirect(w, r, "/listeners", http.StatusSeeOther)
+		return
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func (a *App) listenerHandler(w http.ResponseWriter, r *http.Request) {

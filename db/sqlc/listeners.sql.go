@@ -34,6 +34,15 @@ func (q *Queries) CreateListener(ctx context.Context, arg CreateListenerParams) 
 	return i, err
 }
 
+const deleteListener = `-- name: DeleteListener :exec
+DELETE FROM listeners WHERE uuid = $1
+`
+
+func (q *Queries) DeleteListener(ctx context.Context, uuid string) error {
+	_, err := q.db.ExecContext(ctx, deleteListener, uuid)
+	return err
+}
+
 const getListenersByUser = `-- name: GetListenersByUser :many
 SELECT id, uuid, user_id, created_at, name FROM listeners WHERE user_id = $1
 `
