@@ -90,6 +90,11 @@ func (m *MockQueries) UpdateListenerName(ctx context.Context, arg dbsqlc.UpdateL
 	return nil
 }
 
+func (m *MockQueries) DeleteListener(ctx context.Context, uuid string) error {
+	args := m.Called(ctx, uuid)
+	return args.Error(0)
+}
+
 func (m *MockQueries) GetRequestsByListener(ctx context.Context, listenerID int32) ([]dbsqlc.Request, error) {
 	args := m.Called(ctx, listenerID)
 	return args.Get(0).([]dbsqlc.Request), args.Error(1)

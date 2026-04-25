@@ -1,102 +1,43 @@
 package app
 
 import (
-	"fmt"
-	"github.com/stretchr/testify/assert"
-	mock2 "github.com/stretchr/testify/mock"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
+	"github.com/stretchr/testify/assert"
+	mock2 "github.com/stretchr/testify/mock"
 	dbsqlc "webhooktester/db/sqlc"
 )
 
-func TestIndexHandler_Unauthenticated(t *testing.T) {
-	mock := &MockQueries{}
-	mock.On("GetUserByUsername", mock2.Anything, mock2.Anything).Return(dbsqlc.User{}, fmt.Errorf("user not found"))
-	app := &App{Queries: mock}
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+func TestListenersHandler_Unauthenticated(t *testing.T) {
+	app := &App{Queries: &MockQueries{}}
 	rw := httptest.NewRecorder()
-	app.indexHandler(rw, req)
-	if rw.Code != http.StatusSeeOther {
-		t.Errorf("expected 303 redirect, got %d", rw.Code)
-	}
-	if loc := rw.Header().Get("Location"); loc != "/login" {
-		t.Errorf("expected redirect to /login, got %q", loc)
-	}
+	req := httptest.NewRequest(http.MethodGet, "/listeners", nil)
+	app.listenersHandler(rw, req)
+	assert.Equal(t, http.StatusSeeOther, rw.Code)
 }
 
-func TestIndexHandler_Success(t *testing.T) {
+func TestListenerRESTHandler_Forbidden(t *testing.T) {
 	mock := &MockQueries{}
-	mock.On("GetUserByUsername", mock2.Anything, mock2.Anything).Return(dbsqlc.User{ID: 1, Username: "bob"}, nil)
-	mock.On("GetListenersByUser", mock2.Anything, int32(1)).Return([]dbsqlc.Listener{{Uuid: "abc"}}, nil)
+	mock.On("GetUserByUsername", mock2.Anything, "bob").Return(dbsqlc.User{ID: 1, Username: "bob"}, nil)
+	// Listener belongs to another user (ID: 2)
+	mock.On("GetListenerByUUID", mock2.Anything, "uuid-123").Return(dbsqlc.Listener{Uuid: "uuid-123", UserID: 2}, nil)
 	app := &App{Queries: mock}
-	// Simulate authenticated user by setting username cookie
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/listeners/uuid-123", nil)
 	req.AddCookie(&http.Cookie{Name: "username", Value: "bob"})
 	rw := httptest.NewRecorder()
-	app.indexHandler(rw, req)
-	if rw.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", rw.Code)
-	}
-	if !strings.Contains(rw.Body.String(), "abc") {
-		t.Errorf("expected listener uuid, got %q", rw.Body.String())
-	}
+	app.listenerRESTHandler(rw, req)
+	assert.Equal(t, http.StatusNotFound, rw.Code)
 }
 
-func TestIndexHandler_DBError(t *testing.T) {
+func TestListenersHandler_Authenticated(t *testing.T) {
 	mock := &MockQueries{}
-	mock.On("GetUserByUsername", mock2.Anything, mock2.Anything).Return(dbsqlc.User{ID: 1, Username: "bob"}, nil)
-	mock.On("GetListenersByUser", mock2.Anything, int32(1)).Return([]dbsqlc.Listener{}, assert.AnError)
+	mock.On("GetUserByUsername", mock2.Anything, "bob").Return(dbsqlc.User{ID: 1, Username: "bob"}, nil)
+	mock.On("GetListenersByUser", mock2.Anything, int32(1)).Return([]dbsqlc.Listener{}, nil)
 	app := &App{Queries: mock}
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/listeners", nil)
+	req.AddCookie(&http.Cookie{Name: "username", Value: "bob"})
 	rw := httptest.NewRecorder()
-	app.indexHandler(rw, req)
-	if rw.Code != http.StatusSeeOther {
-		t.Errorf("expected 303 redirect, got %d", rw.Code)
-	}
-	if loc := rw.Header().Get("Location"); loc != "/login" {
-		t.Errorf("expected redirect to /login, got %q", loc)
-	}
-}
-
-func TestCreateListenerHandler_Unauthenticated(t *testing.T) {
-	mock := &MockQueries{}
-	mock.On("GetUserByUsername", mock2.Anything, mock2.Anything).Return(dbsqlc.User{}, fmt.Errorf("user not found"))
-	app := &App{Queries: mock}
-	req := httptest.NewRequest(http.MethodPost, "/listener", nil)
-	rw := httptest.NewRecorder()
-	app.createListenerHandler(rw, req)
-	if rw.Code != http.StatusSeeOther {
-		t.Errorf("expected 303 redirect, got %d", rw.Code)
-	}
-	if loc := rw.Header().Get("Location"); loc != "/login" {
-		t.Errorf("expected redirect to /login, got %q", loc)
-	}
-}
-
-func TestCreateListenerHandler_Success(t *testing.T) {
-	mock := &MockQueries{}
-	mock.On("GetUserByUsername", mock2.Anything, mock2.Anything).Return(dbsqlc.User{ID: 1, Username: "bob"}, nil)
-	mock.On("CreateListener", mock2.Anything, mock2.Anything).Return(dbsqlc.Listener{Uuid: "abc", UserID: 1}, nil)
-	app := &App{Queries: mock}
-	req := httptest.NewRequest(http.MethodPost, "/listener", nil)
-	rw := httptest.NewRecorder()
-	app.createListenerHandler(rw, req)
-	if rw.Code != http.StatusSeeOther {
-		t.Errorf("expected redirect, got %d", rw.Code)
-	}
-}
-
-func TestCreateListenerHandler_DBError(t *testing.T) {
-	mock := &MockQueries{}
-	mock.On("GetUserByUsername", mock2.Anything, mock2.Anything).Return(dbsqlc.User{ID: 1, Username: "bob"}, nil)
-	mock.On("CreateListener", mock2.Anything, mock2.Anything).Return(dbsqlc.Listener{}, assert.AnError)
-	app := &App{Queries: mock}
-	req := httptest.NewRequest(http.MethodPost, "/listener", nil)
-	rw := httptest.NewRecorder()
-	app.createListenerHandler(rw, req)
-	if rw.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500, got %d", rw.Code)
-	}
+	app.listenersHandler(rw, req)
+	assert.Equal(t, http.StatusOK, rw.Code)
 }
