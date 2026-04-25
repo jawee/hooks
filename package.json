@@ -1,0 +1,53 @@
+{
+  "name": "webhooktester",
+  "version": "1.0.0",
+  "description": "A Go web server for testing webhooks with user authentication and per-user listener isolation.",
+  "main": "index.js",
+  "dependencies": {
+    "baseline-browser-mapping": "^2.10.21",
+    "browserslist": "^4.28.2",
+    "caniuse-lite": "^1.0.30001790",
+    "detect-libc": "^2.1.2",
+    "electron-to-chromium": "^1.5.344",
+    "enhanced-resolve": "^5.21.0",
+    "escalade": "^3.2.0",
+    "fraction.js": "^5.3.4",
+    "graceful-fs": "^4.2.11",
+    "is-extglob": "^2.1.1",
+    "is-glob": "^4.0.3",
+    "jiti": "^2.6.1",
+    "lightningcss": "^1.32.0",
+    "lightningcss-darwin-arm64": "^1.32.0",
+    "magic-string": "^0.30.21",
+    "mri": "^1.2.0",
+    "nanoid": "^3.3.11",
+    "node-addon-api": "^7.1.1",
+    "node-releases": "^2.0.38",
+    "picocolors": "^1.1.1",
+    "picomatch": "^4.0.4",
+    "postcss-value-parser": "^4.2.0",
+    "source-map-js": "^1.2.1",
+    "tapable": "^2.3.3",
+    "update-browserslist-db": "^1.2.3"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.5.0",
+    "postcss": "^8.5.10",
+    "tailwindcss": "^4.2.4"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jawee/hooks.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/jawee/hooks/issues"
+  },
+  "homepage": "https://github.com/jawee/hooks#readme"
+}

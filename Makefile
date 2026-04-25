@@ -1,15 +1,20 @@
-.PHONY: generate build test run install-air install-templ
+
+.PHONY: generate build test run install-air install-templ css
+
 
 generate:
 	templ generate
 
-build: generate
+css:
+	tailwindcss -o ./static/tailwind.css --minify
+
+build: generate css
 	go build -o $(APP) ./cmd/app/main.go
 
 test:
 	go test ./...
 
-run: generate
+run: generate css
 	air
 
 install-air:
