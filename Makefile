@@ -4,7 +4,7 @@ generate:
 	templ generate
 
 build: generate
-	go build -o $(APP) main.go
+	go build -o $(APP) ./cmd/app/main.go
 
 test:
 	go test ./...
