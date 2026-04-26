@@ -6,7 +6,7 @@ generate:
 	templ generate
 
 css:
-	tailwindcss -o ./static/tailwind.css --minify
+	npx tailwindcss-cli -o ./static/tailwind.css --minify
 
 build: generate css
 	go build -o $(APP) ./cmd/app/main.go
